@@ -195,8 +195,8 @@ SERVICES = {
     "fb_cmt": {
         "title": "💬 TĂNG BÌNH LUẬN",
         "items": [
-            {"id": "cmt_s2_sale", "name": "🏷️ S2 Cmt Sale", "price": 148.4},
-            {"id": "cmt_s1_sale", "name": "🔥 S1 Cmt Sale", "price": 164.0},
+            {"id": "cmt_s2_sale", "name": "🏷️ S2 Cmt Sale", "price": 1480.4},
+            {"id": "cmt_s1_sale", "name": "🔥 S1 Cmt Sale", "price": 1640.0},
         ]
     },
     "fb_page": {
