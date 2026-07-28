@@ -98,7 +98,7 @@ GROUPS_PAGE_1 = [
     {"id": "gr_6", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/887995696353613?locale=vi_VN", "mem": 1400000},
     {"id": "gr_7", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/185994147837943?locale=vi_VN", "mem": 1300000},
     {"id": "gr_8", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/7985277011546263?locale=vi_VN", "mem": 1100000},
-    {"id": "gr_9", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/1381057159109257", "mem": 1100000},
+    {"id": "gr_9", "name": "Mua Ban Acc Playtogether", "link": "https://www.facebook.com/groups/1381057159109257", "mem": 1100000},
     {"id": "gr_10", "name": "Dien Chau - A Day Roi", "link": "https://www.facebook.com/groups/298182716262940?locale=vi_VN", "mem": 1000000},
     {"id": "gr_11", "name": "Review Du Lich Phu Quoc", "link": "https://www.facebook.com/groups/greatsingerkk", "mem": 738000},
     {"id": "gr_12", "name": "Hoi Ga Tre Sai Gon", "link": "https://www.facebook.com/groups/3273435586305961?locale=vi_VN", "mem": 323000},
@@ -225,6 +225,7 @@ SERVICES = {
         "items": [
             {"id": "view_reel_dq", "name": "🎬 View reel độc quyền", "price": 61.2},
             {"id": "view_fb_3s", "name": "⏱️ View facebook 3s chạy Reel", "price": 106.8},
+            {"id": "story_85", "name": "📱 Kênh 85 Tăng view story", "price": 56.0},
         ]
     },
     "tt_like": {
