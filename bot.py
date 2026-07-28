@@ -98,7 +98,7 @@ GROUPS_PAGE_1 = [
     {"id": "gr_6", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/887995696353613?locale=vi_VN", "mem": 1400000},
     {"id": "gr_7", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/185994147837943?locale=vi_VN", "mem": 1300000},
     {"id": "gr_8", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/7985277011546263?locale=vi_VN", "mem": 1100000},
-    {"id": "gr_9", "name": "Mua Ban Acc Playtogether", "link": "https://www.facebook.com/groups/1381057159109257", "mem": 1100000},
+    {"id": "gr_9", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/1381057159109257", "mem": 1100000},
     {"id": "gr_10", "name": "Dien Chau - A Day Roi", "link": "https://www.facebook.com/groups/298182716262940?locale=vi_VN", "mem": 1000000},
     {"id": "gr_11", "name": "Review Du Lich Phu Quoc", "link": "https://www.facebook.com/groups/greatsingerkk", "mem": 738000},
     {"id": "gr_12", "name": "Hoi Ga Tre Sai Gon", "link": "https://www.facebook.com/groups/3273435586305961?locale=vi_VN", "mem": 323000},
@@ -225,7 +225,12 @@ SERVICES = {
         "items": [
             {"id": "view_reel_dq", "name": "🎬 View reel độc quyền", "price": 61.2},
             {"id": "view_fb_3s", "name": "⏱️ View facebook 3s chạy Reel", "price": 106.8},
-            {"id": "story_85", "name": "📱 Kênh 85 Tăng view story", "price": 56.0},
+        ]
+    },
+    "fb_story": {
+        "title": "👁️ TĂNG VIEW STORY",
+        "items": [
+            {"id": "story_view_s1", "name": "📱 S1 View Story Facebook", "price": 50.0},
         ]
     },
     "tt_like": {
@@ -326,7 +331,48 @@ SERVICES = {
             {"id": "vip_mat_60p", "name": "⭐ Vip mắt Tiktok 60 phút", "price": 728.0 + 20},
             {"id": "vip_mat_90p", "name": "⭐ Vip mắt Tiktok 90 phút", "price": 936.0 + 20},
             {"id": "vip_mat_120p", "name": "⭐ Vip mắt Tiktok 120 phút", "price": 1131.0 + 20},
-            {"id": "tim_live", "name": "❤️ Tim Live stream (Nên dùng tăng mắt)", "price": 0.5 + 20},
+            {"id": "vip_live", "name": "❤️ Tim Live stream (Nên dùng tăng mắt)", "price": 0.5 + 20},
+        ]
+    },
+    # ==================== DỊCH VỤ YOUTUBE ====================
+    "yt_sub": {
+        "title": "▶️ YOUTUBE - TĂNG ĐĂNG KÝ KÊNH",
+        "items": [
+            {"id": "yt_mc_6505", "name": "MC 6505 LÊN CỰC NHANH - Tuột 100% -YouTube Subscribers | Không bảo hành", "price": 190.14},
+            {"id": "yt_mc_6506", "name": "MC 6506 S23 - Sub youtube - new - Tài khoản cực trâu - Kênh bắt buộc có video trên 2 phút", "price": 948.09},
+            {"id": "yt_mc_6661", "name": "MC 6661 Youtube sub Max 1k Lên nhanh", "price": 870.3},
+        ]
+    },
+    "yt_like": {
+        "title": "👍 YOUTUBE - TĂNG LIKE",
+        "items": [
+            {"id": "yt_mc_6508", "name": "MC 6508 Like rẻ nhanh | 20k/Day | Không bảo hành", "price": 29.42},
+            {"id": "yt_mc_6509", "name": "MC 6509 S4 like nhanh chất lượng cao | Không bảo hành", "price": 30.58},
+        ]
+    },
+    "yt_view": {
+        "title": "👁️ YOUTUBE - TĂNG VIEW & LIVESTREAM",
+        "items": [
+            {"id": "yt_mc_6510", "name": "MC 6510 S1 Mắt Live YTB", "price": 22.2},
+        ]
+    },
+    # ==================== DỊCH VỤ INSTAGRAM ====================
+    "ig_like": {
+        "title": "❤️ INSTAGRAM - TĂNG LIKE",
+        "items": [
+            {"id": "ig_mc_6274", "name": "MC 6274 Like Instagram Việt xịn", "price": 31.5},
+            {"id": "ig_mc_6500", "name": "MC 6500 S6 Like tây | Không bảo hành", "price": 23.93},
+            {"id": "ig_mc_6501", "name": "MC 6501 S7 Like tây | Bảo hành 7 ngày", "price": 22.59},
+        ]
+    },
+    "ig_follow": {
+        "title": "👤 INSTAGRAM - TĂNG THEO DÕI",
+        "items": [
+            {"id": "ig_mc_6270", "name": "MC 6270 S1 Follower instagram Việt", "price": 54.5},
+            {"id": "ig_mc_6271", "name": "MC 6271 Sv2 Follow việt giá rẻ", "price": 37.25},
+            {"id": "ig_mc_6276", "name": "MC 6276 S5 follow Instagram Việt high", "price": 107.71},
+            {"id": "ig_mc_6502", "name": "MC 6502 S2 Follower tây nhanh | Không bảo hành", "price": 46.49},
+            {"id": "ig_mc_6503", "name": "MC 6503 Follow instagram - tây | Bảo hành 7 ngày", "price": 48.69},
         ]
     }
 }
@@ -384,6 +430,10 @@ def main_menu_keyboard(user_id, username, first_name="bạn"):
         [
             InlineKeyboardButton("📘 DỊCH VỤ FACEBOOK", callback_data="cat_fb"),
             InlineKeyboardButton("🎵 DỊCH VỤ TIKTOK", callback_data="cat_tt")
+        ],
+        [
+            InlineKeyboardButton("▶️ DỊCH VỤ YOUTUBE", callback_data="cat_yt"),
+            InlineKeyboardButton("📸 DỊCH VỤ INSTAGRAM", callback_data="cat_ig")
         ],
         [InlineKeyboardButton("🎁 NHẬP GITCODE KHUYẾN MÃI", callback_data="menu_gitcode")],
         [InlineKeyboardButton("📜 LỊCH SỬ ĐÃ DÙNG", callback_data="view_history")],
@@ -460,7 +510,8 @@ def fb_menu_keyboard():
         [InlineKeyboardButton("👍 Tăng Like Bài Viết", callback_data="subcat_fb_like"), InlineKeyboardButton("👤 Tăng Follow / Sub", callback_data="subcat_fb_follow")],
         [InlineKeyboardButton("💬 Tăng Bình Luận", callback_data="subcat_fb_cmt"), InlineKeyboardButton("⭐ Tăng Like Page", callback_data="subcat_fb_page")],
         [InlineKeyboardButton("👥 Tăng Mem Group", callback_data="subcat_fb_group"), InlineKeyboardButton("🔄 Share / Mem Group", callback_data="subcat_fb_share")],
-        [InlineKeyboardButton("👁️ View / Mắt Live", callback_data="subcat_fb_view"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+        [InlineKeyboardButton("👁️ View / Mắt Live", callback_data="subcat_fb_view"), InlineKeyboardButton("👁️ Tăng View Story", callback_data="subcat_fb_story")],
+        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
     ]
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -476,6 +527,23 @@ def tiktok_menu_keyboard():
     ]
     return text, InlineKeyboardMarkup(keyboard)
 
+def youtube_menu_keyboard():
+    text = "▶️ DANH MỤC DỊCH VỤ YOUTUBE\n\n👇 Chọn loại dịch vụ bạn muốn sử dụng:"
+    keyboard = [
+        [InlineKeyboardButton("📥 Tăng Đăng Ký Kênh", callback_data="subcat_yt_sub")],
+        [InlineKeyboardButton("👍 Tăng Like", callback_data="subcat_yt_like"), InlineKeyboardButton("👁️ Tăng View & Live", callback_data="subcat_yt_view")],
+        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+def instagram_menu_keyboard():
+    text = "📸 DANH MỤC DỊCH VỤ INSTAGRAM\n\n👇 Chọn loại dịch vụ bạn muốn sử dụng:"
+    keyboard = [
+        [InlineKeyboardButton("❤️ Tăng Like", callback_data="subcat_ig_like"), InlineKeyboardButton("👤 Tăng Theo Dõi", callback_data="subcat_ig_follow")],
+        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
 def service_items_keyboard(cat_key):
     cat_data = SERVICES.get(cat_key, {})
     text = f"🛠️ DỊCH VỤ: {cat_data.get('title', 'DỊCH VỤ')}\n\n👇 Chọn gói cụ thể bên dưới:"
@@ -484,7 +552,15 @@ def service_items_keyboard(cat_key):
         btn_text = f"{item['name']} - {item['price']}đ"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"buy:{cat_key}:{item['id']}")])
     
-    back_target = "cat_tt" if cat_key.startswith("tt_") else "cat_fb"
+    if cat_key.startswith("tt_"):
+        back_target = "cat_tt"
+    elif cat_key.startswith("yt_"):
+        back_target = "cat_yt"
+    elif cat_key.startswith("ig_"):
+        back_target = "cat_ig"
+    else:
+        back_target = "cat_fb"
+        
     keyboard.append([
         InlineKeyboardButton("↩️ Trở về", callback_data=back_target),
         InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
@@ -702,9 +778,18 @@ async def receive_link_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         f"👇 Vui lòng nhập số lượng bạn muốn chạy (Ví dụ: 100, 500, 1000):"
     )
     
+    if cat_key.startswith("tt_"):
+        subcat_target = f"subcat_{cat_key}"
+    elif cat_key.startswith("yt_"):
+        subcat_target = f"subcat_{cat_key}"
+    elif cat_key.startswith("ig_"):
+        subcat_target = f"subcat_{cat_key}"
+    else:
+        subcat_target = f"subcat_{cat_key}"
+
     keyboard = [
         [
-            InlineKeyboardButton("↩️ Chọn lại gói", callback_data=f"subcat_{cat_key}"),
+            InlineKeyboardButton("↩️ Chọn lại gói", callback_data=subcat_target),
             InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
         ]
     ]
@@ -744,43 +829,85 @@ async def receive_quantity_handler(update: Update, context: ContextTypes.DEFAULT
         context.user_data["prompt_msg_id"] = msg.message_id
         return INPUT_QUANTITY
 
+    context.user_data["order_quantity"] = quantity
+    cat_key = context.user_data.get("current_cat_key", "")
+
+    # Kiểm tra nếu là dịch vụ tăng bình luận (fb_cmt hoặc tt_cmt) thì hiển thị 2 menu Khen/Chê
+    if cat_key in ["fb_cmt", "tt_cmt"]:
+        text = (
+            f"📊 Số lượng: {quantity:,}\n\n"
+            f"👇 Vui lòng chọn loại bình luận bạn muốn:"
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("💬 Cmt khen", callback_data="cmt_type:Khen"),
+                InlineKeyboardButton("💬 Cmt chê", callback_data="cmt_type:Chê")
+            ],
+            [
+                InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
+            ]
+        ]
+        msg = await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        context.user_data["prompt_msg_id"] = msg.message_id
+        return ConversationHandler.END
+    else:
+        # Xử lý các dịch vụ khác bình thường như cũ
+        return await process_final_order(update, context, "Mặc định")
+
+async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE, cmt_type="Mặc định"):
     user = update.effective_user
     selected_item = context.user_data.get("buying_service", {})
     link = context.user_data.get("order_link", "")
+    quantity = context.user_data.get("order_quantity", 0)
     
     price_per_unit = selected_item.get("price", 0)
     total_price = quantity * price_per_unit
     
     user_data = get_user_data(user.id)
     if user_data["balance"] < total_price:
-        await update.message.reply_text(
+        msg_text = (
             f"❌ SỐ DƯ KHÔNG ĐỦ!\n\n"
             f"💳 Số dư của bạn: {user_data['balance']:,.0f}đ\n"
             f"💵 Tổng tiền cần thanh toán: {total_price:,.0f}đ\n\n"
-            f"⚠️ Vui lòng nạp thêm tiền để tiếp tục đặt hàng!",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Nạp tiền ngay", callback_data="nap_tien"), InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]])
+            f"⚠️ Vui lòng nạp thêm tiền để tiếp tục đặt hàng!"
         )
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Nạp tiền ngay", callback_data="nap_tien"), InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]])
+        if update.callback_query:
+            await update.callback_query.edit_message_text(msg_text, reply_markup=keyboard)
+        else:
+            await update.message.reply_text(msg_text, reply_markup=keyboard)
         return ConversationHandler.END
 
     user_data["balance"] -= total_price
     
-    history_item = f"SMM: {selected_item.get('name')} | SL: {quantity:,} | Giá: {total_price:,.0f}đ | Link: {link}"
+    if cmt_type != "Mặc định":
+        history_item = f"SMM: {selected_item.get('name')} ({cmt_type}) | SL: {quantity:,} | Giá: {total_price:,.0f}đ | Link: {link}"
+    else:
+        history_item = f"SMM: {selected_item.get('name')} | SL: {quantity:,} | Giá: {total_price:,.0f}đ | Link: {link}"
+        
     user_data["history"].append(history_item)
     save_users_db()
     
     new_bal = user_data["balance"]
 
-    await update.message.reply_text(
+    success_text = (
         f"✅ ĐẶT HÀNG TĂNG TƯƠNG TÁC THÀNH CÔNG!\n\n"
         f"📦 Gói: {selected_item.get('name')}\n"
+        f"💬 Loại cmt: {cmt_type}\n"
         f"🔗 Link: `{link}`\n"
         f"📊 Số lượng: {quantity:,}\n"
         f"💵 Tổng tiền đã trừ: {total_price:,.0f}đ\n"
         f"💳 Số dư còn lại: {new_bal:,.0f}đ\n\n"
-        f"⏳ Hệ thống đang xử lý đơn hàng của bạn.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]]),
-        parse_mode="Markdown"
+        f"⏳ Hệ thống đang xử lý đơn hàng của bạn."
     )
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(success_text, reply_markup=reply_markup, parse_mode="Markdown")
+        target_chat = update.callback_query.message.chat_id
+    else:
+        await update.message.reply_text(success_text, reply_markup=reply_markup, parse_mode="Markdown")
+        target_chat = update.effective_chat.id
 
     user_mention = get_user_mention(user)
 
@@ -789,6 +916,7 @@ async def receive_quantity_handler(update: Update, context: ContextTypes.DEFAULT
         f"----------------------------------------\n"
         f"👤 Khách hàng: {user_mention} (ID: `{user.id}`)\n"
         f"📦 Gói: {selected_item.get('name')}\n"
+        f"💬 Loại cmt: {cmt_type}\n"
         f"🔗 Link: `{link}`\n"
         f"📊 Số lượng: {quantity:,}\n"
         f"💵 Tổng tiền: {total_price:,.0f}đ"
@@ -814,6 +942,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     get_user_data(user.id)
 
+    if data.startswith("cmt_type:"):
+        cmt_type = data.split(":")[1]
+        await process_final_order(update, context, cmt_type)
+        return
+
     if data == "menu_main":
         text, reply_markup = main_menu_keyboard(user.id, user.username, user.first_name)
         if query.message.photo:
@@ -830,7 +963,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, reply_markup = tiktok_menu_keyboard()
         await query.edit_message_text(text, reply_markup=reply_markup)
 
-    elif data.startswith("subcat_fb_") or data.startswith("subcat_tt_"):
+    elif data == "cat_yt":
+        text, reply_markup = youtube_menu_keyboard()
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
+    elif data == "cat_ig":
+        text, reply_markup = instagram_menu_keyboard()
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
+    elif data.startswith("subcat_fb_") or data.startswith("subcat_tt_") or data.startswith("subcat_yt_") or data.startswith("subcat_ig_"):
         cat_key = data.replace("subcat_", "")
         context.user_data["current_cat_key"] = cat_key
         if cat_key in SERVICES:
