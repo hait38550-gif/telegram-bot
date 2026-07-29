@@ -46,7 +46,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
 BANK_INFO = {
     "bank_name": "MBBank",
-    "account_no": "505499999999",
+    "account_no": "5054999999999",
     "account_name": "NGUYEN TIEN DAT"
 }
 
@@ -989,6 +989,38 @@ async def receive_sms_phone_handler(update: Update, context: ContextTypes.DEFAUL
         except Exception:
             pass
 
+    user_sms_list = SMS_DB.get(user.id, [])
+    active_sms = [s for s in user_sms_list if s["expire_time"] > time.time()]
+
+    if context.user_data.get("is_adding_free_phone", False) and active_sms:
+        current_pkg = active_sms[0]
+        expire_time = current_pkg["expire_time"]
+        pkg_name = current_pkg["package"]
+
+        sms_entry = {
+            "phone": phone,
+            "package": pkg_name,
+            "price": 0,
+            "expire_time": expire_time
+        }
+        SMS_DB[user.id].append(sms_entry)
+        save_sms_db()
+
+        context.user_data["is_adding_free_phone"] = False
+
+        success_text = (
+            f"✅ THÊM SỐ ĐIỆN THOẠI SPAM THÀNH CÔNG!\n\n"
+            f"📦 Áp dụng theo gói đang hoạt động: {pkg_name}\n"
+            f"📱 SĐT mới thêm: `{phone}`\n"
+            f"⏳ Trạng thái: Đang tiến hành spam."
+        )
+        success_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💣 Quản lý danh sách SMS", callback_data="sms_menu_main")],
+            [InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]
+        ])
+        await update.message.reply_text(success_text, parse_mode="Markdown", reply_markup=success_keyboard)
+        return ConversationHandler.END
+
     pkg_info = context.user_data.get("buying_sms_pkg")
     if not pkg_info:
         await update.message.reply_text("❌ Lỗi phiên giao dịch, vui lòng thử lại từ đầu!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]))
@@ -1039,25 +1071,10 @@ async def receive_sms_phone_handler(update: Update, context: ContextTypes.DEFAUL
     )
     
     success_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Thêm SĐT khác", callback_data="sms_menu_main")],
+        [InlineKeyboardButton("💣 Quản lý danh sách SMS", callback_data="sms_menu_main")],
         [InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]
     ])
     await update.message.reply_text(success_text, parse_mode="Markdown", reply_markup=success_keyboard)
-
-    user_mention = get_user_mention(user)
-    admin_notice = (
-        f"🔔 ĐƠN HÀNG SPAM SMS MỚI!\n"
-        f"----------------------------------------\n"
-        f"👤 Khách hàng: {user_mention} (ID: `{user.id}`)\n"
-        f"📦 Gói: {pkg_name}\n"
-        f"📱 SĐT spam: `{phone}`\n"
-        f"💵 Giá: {pkg_price:,.0f}đ"
-    )
-    try:
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="Markdown")
-    except Exception:
-        pass
-
     return ConversationHandler.END
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1073,7 +1090,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_final_order(update, context, cmt_type)
         return
 
-    # ==================== XỬ THAO TÁC MENU SPAM SMS ====================
     if data == "sms_menu_main":
         user_sms_list = SMS_DB.get(user.id, [])
         active_sms = [s for s in user_sms_list if s["expire_time"] > time.time()]
@@ -1111,18 +1127,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "sms_add_another":
-        text = (
-            f"💣 HỆ THỐNG SPAM SMS (THÊM SỐ MỚI)\n"
-            f"----------------------------------------\n"
-            f"👇 Vui lòng chọn loại dịch vụ SMS bạn muốn mua thêm:"
-        )
-        keyboard = [
-            [InlineKeyboardButton("📱 SMS Thường", callback_data="sms_cat_thuong")],
-            [InlineKeyboardButton("👑 SMS Vip", callback_data="sms_cat_vip")],
-            [InlineKeyboardButton("↩️ Trở về quản lý SMS", callback_data="sms_menu_main")],
-            [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        user_sms_list = SMS_DB.get(user.id, [])
+        active_sms = [s for s in user_sms_list if s["expire_time"] > time.time()]
+
+        if active_sms:
+            context.user_data["is_adding_free_phone"] = True
+            keyboard = [[InlineKeyboardButton("↩️ Trở về", callback_data="sms_menu_main"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]
+            msg = await query.edit_message_text(
+                f"➕ THÊM SỐ ĐIỆN THOẠI KHÁC\n"
+                f"----------------------------------------\n"
+                f"ℹ️ Bạn đang có gói dịch vụ còn hạn, số điện thoại này sẽ được thêm vào hệ thống spam hoàn toàn miễn phí.\n\n"
+                f"💬 Vui lòng gửi số điện thoại cần spam vào đây:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            context.user_data["prompt_msg_id"] = msg.message_id
+            return INPUT_SMS_PHONE
+        else:
+            text = (
+                f"💣 HỆ THỐNG SPAM SMS (MUA GÓI MỚI)\n"
+                f"----------------------------------------\n"
+                f"⏳ Gói cũ của bạn đã hết hạn. Vui lòng chọn gói dịch vụ SMS mới:"
+            )
+            keyboard = [
+                [InlineKeyboardButton("📱 SMS Thường", callback_data="sms_cat_thuong")],
+                [InlineKeyboardButton("👑 SMS Vip", callback_data="sms_cat_vip")],
+                [InlineKeyboardButton("↩️ Trở về quản lý SMS", callback_data="sms_menu_main")],
+                [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data in ["sms_cat_thuong", "sms_cat_vip"]:
         cat_key = "sms_thuong" if data == "sms_cat_thuong" else "sms_vip"
@@ -1142,6 +1174,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pkg_info = next((p for p in SMS_PACKAGES[cat_key]["packages"] if p["id"] == pkg_id), None)
         if pkg_info:
             context.user_data["buying_sms_pkg"] = pkg_info
+            context.user_data["is_adding_free_phone"] = False
             keyboard = [[InlineKeyboardButton("↩️ Trở về", callback_data=f"sms_cat_{'thuong' if cat_key=='sms_thuong' else 'vip'}"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]
             msg = await query.edit_message_text(
                 f"📦 ĐÃ CHỌN: {pkg_info['name']}\n"
@@ -1225,7 +1258,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    # ==================== QUẢN LÝ ADMIN CHO SPAM SMS ====================
     elif data == "admin_panel":
         if not is_admin(user.id, user.username):
             await query.answer("❌ Bạn không có quyền truy cập!", show_alert=True)
@@ -1751,47 +1783,53 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mem_count = selected_group['mem']
         total_price = mem_count * 20
         user_data = get_user_data(user.id)
-        current_balance = user_data["balance"]
-
-        if current_balance < total_price:
-            await query.edit_message_text(
-                text=(
-                    f"❌ THANH TOÁN THẤT BẠI!\n\n"
-                    f"👥 Nhóm: {selected_group['name']}\n"
-                    f"📊 Số lượng: {mem_count:,} mem\n"
-                    f"💵 Số tiền cần: {total_price:,.0f} VND\n"
-                    f"💳 Số dư của bạn: {current_balance:,.0f} VND\n\n"
-                    f"⚠️ Tài khoản của bạn không đủ tiền để thực hiện giao dịch này. Vui lòng bấm nạp thêm tiền!"
-                ),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💳 Nạp tiền ngay", callback_data="nap_tien")],
-                    [InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]
-                ])
+        
+        if user_data["balance"] < total_price:
+            msg_text = (
+                f"❌ SỐ DƯ KHÔNG ĐỦ!\n\n"
+                f"💳 Số dư của bạn: {user_data['balance']:,.0f}đ\n"
+                f"💵 Giá nhóm: {total_price:,.0f}đ\n\n"
+                f"⚠️ Vui lòng nạp thêm tiền để mua nhóm!"
             )
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Nạp tiền ngay", callback_data="nap_tien"), InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]])
+            await query.edit_message_text(msg_text, reply_markup=keyboard)
             return
 
         user_data["balance"] -= total_price
-        user_data["history"].append(f"Mua Nhóm: {selected_group['name']} | Giá: {total_price:,.0f}đ | Link: {selected_group['link']}")
+        user_data["history"].append(f"Mua Nhóm: {selected_group['name']} | Giá: {total_price:,.0f}đ")
         save_users_db()
 
         success_text = (
             f"✅ MUA NHÓM THÀNH CÔNG!\n\n"
             f"👥 Tên Group: {selected_group['name']}\n"
             f"🔗 Link Group: {selected_group['link']}\n"
-            f"💵 Đã trừ: {total_price:,.0f} VND\n"
-            f"💳 Số dư còn lại: {user_data['balance']:,.0f} VND\n\n"
-            f"🎉 Cảm ơn bạn đã sử dụng dịch vụ!"
+            f"💵 Đã trừ: {total_price:,.0f} VNĐ\n"
+            f"💳 Số dư còn lại: {user_data['balance']:,.0f} VNĐ\n\n"
+            f"📌 Vui lòng lưu lại link nhóm ở trên!"
         )
-        await query.edit_message_text(
-            text=success_text,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]]),
-            disable_web_page_preview=True
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+        await query.edit_message_text(success_text, reply_markup=keyboard, disable_web_page_preview=True)
+
+        user_mention = get_user_mention(user)
+        admin_notice = (
+            f"🔔 ĐƠN MUA NHÓM MỚI!\n"
+            f"----------------------------------------\n"
+            f"👤 Khách hàng: {user_mention} (ID: `{user.id}`)\n"
+            f"👥 Group: {selected_group['name']}\n"
+            f"🔗 Link: {selected_group['link']}\n"
+            f"💵 Tổng tiền: {total_price:,.0f}đ"
         )
+        try:
+            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, disable_web_page_preview=True)
+        except Exception:
+            pass
 
 def main():
     keep_alive()
-    
     application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("topup", admin_topup_cmd))
 
     conv_handler = ConversationHandler(
         entry_points=[
@@ -1809,11 +1847,10 @@ def main():
         fallbacks=[CommandHandler("start", start)],
     )
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("topup", admin_topup_cmd))
     application.add_handler(conv_handler)
+    application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("🤖 Bot đang chạy...")
+    logging.info("Bot đang khởi động...")
     application.run_polling()
 
 if __name__ == "__main__":
