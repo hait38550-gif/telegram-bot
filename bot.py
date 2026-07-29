@@ -43,6 +43,7 @@ logging.getLogger("httpx").setLevel(logging.INFO)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "YourAdminUsername")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_ADMIN_CHAT_ID")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+
 BANK_INFO = {
     "bank_name": "MBBank",
     "account_no": "505499999999",
@@ -417,7 +418,6 @@ SMS_PACKAGES = {
     }
 }
 
-INPUT_LINK, INPUT_QUANTITY, INPUT_TOPUP_AMOUNT, INPUT_GITCODE, INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE = range(7)
 INPUT_LINK, INPUT_QUANTITY, INPUT_TOPUP_AMOUNT, INPUT_GITCODE, INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE = range(7)
 
 def is_admin(user_id, username):
@@ -989,42 +989,6 @@ async def receive_sms_phone_handler(update: Update, context: ContextTypes.DEFAUL
         except Exception:
             pass
 
-    user_sms_list = SMS_DB.get(user.id, [])
-    active_sms = [s for s in user_sms_list if s["expire_time"] > time.time()]
-
-    # TRƯỜNG HỢP 1: Khách đã có gói active từ trước, khi thêm SĐT khác sẽ dùng chung gói hiện tại (không mất phí mua mới)
-    if context.user_data.get("is_adding_free_phone", False) and active_sms:
-        # Lấy thông tin gói đang hoạt động gần nhất của khách
-        current_pkg = active_sms[0]
-        expire_time = current_pkg["expire_time"]
-        pkg_name = current_pkg["package"]
-
-        sms_entry = {
-            "phone": phone,
-            "package": pkg_name,
-            "price": 0,
-            "expire_time": expire_time
-        }
-        SMS_DB[user.id].append(sms_entry)
-        save_sms_db()
-
-        # Reset flag
-        context.user_data["is_adding_free_phone"] = False
-
-        success_text = (
-            f"✅ THÊM SỐ ĐIỆN THOẠI SPAM THÀNH CÔNG!\n\n"
-            f"📦 Áp dụng theo gói đang hoạt động: {pkg_name}\n"
-            f"📱 SĐT mới thêm: `{phone}`\n"
-            f"⏳ Trạng thái: Đang tiến hành spam."
-        )
-        success_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💣 Quản lý danh sách SMS", callback_data="sms_menu_main")],
-            [InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]
-        ])
-        await update.message.reply_text(success_text, parse_mode="Markdown", reply_markup=success_keyboard)
-        return ConversationHandler.END
-
-    # TRƯỜNG HỢP 2: Khách mua gói mới hoàn toàn
     pkg_info = context.user_data.get("buying_sms_pkg")
     if not pkg_info:
         await update.message.reply_text("❌ Lỗi phiên giao dịch, vui lòng thử lại từ đầu!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]))
@@ -1075,10 +1039,25 @@ async def receive_sms_phone_handler(update: Update, context: ContextTypes.DEFAUL
     )
     
     success_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💣 Quản lý danh sách SMS", callback_data="sms_menu_main")],
+        [InlineKeyboardButton("➕ Thêm SĐT khác", callback_data="sms_menu_main")],
         [InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]
     ])
     await update.message.reply_text(success_text, parse_mode="Markdown", reply_markup=success_keyboard)
+
+    user_mention = get_user_mention(user)
+    admin_notice = (
+        f"🔔 ĐƠN HÀNG SPAM SMS MỚI!\n"
+        f"----------------------------------------\n"
+        f"👤 Khách hàng: {user_mention} (ID: `{user.id}`)\n"
+        f"📦 Gói: {pkg_name}\n"
+        f"📱 SĐT spam: `{phone}`\n"
+        f"💵 Giá: {pkg_price:,.0f}đ"
+    )
+    try:
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="Markdown")
+    except Exception:
+        pass
+
     return ConversationHandler.END
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1127,38 +1106,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📱 SMS Thường", callback_data="sms_cat_thuong")],
                 [InlineKeyboardButton("👑 SMS Vip", callback_data="sms_cat_vip")],
                 [InlineKeyboardButton("📋 Danh sách đã spam", callback_data="sms_list_history")],
-                [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
-            ]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data == "sms_add_another":
-        user_sms_list = SMS_DB.get(user.id, [])
-        active_sms = [s for s in user_sms_list if s["expire_time"] > time.time()]
-
-        # Nếu khách VẪN CÒN GÓI Active: Nhập thẳng SĐT luôn mà ko bắt mua gói nữa
-        if active_sms:
-            context.user_data["is_adding_free_phone"] = True
-            keyboard = [[InlineKeyboardButton("↩️ Trở về", callback_data="sms_menu_main"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]
-            msg = await query.edit_message_text(
-                f"➕ THÊM SỐ ĐIỆN THOẠI KHÁC\n"
-                f"----------------------------------------\n"
-                f"ℹ️ Bạn đang có gói dịch vụ còn hạn, số điện thoại này sẽ được thêm vào hệ thống spam hoàn toàn miễn phí.\n\n"
-                f"💬 Vui lòng gửi số điện thoại cần spam vào đây:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            context.user_data["prompt_msg_id"] = msg.message_id
-            return INPUT_SMS_PHONE
-        else:
-            # Nếu hết hạn gói thì bắt buộc chọn lại gói mới như bình thường
-            text = (
-                f"💣 HỆ THỐNG SPAM SMS (MUA GÓI MỚI)\n"
-                f"----------------------------------------\n"
-                f"⏳ Gói cũ của bạn đã hết hạn. Vui lòng chọn gói dịch vụ SMS mới:"
-            )
-            keyboard = [
-                [InlineKeyboardButton("📱 SMS Thường", callback_data="sms_cat_thuong")],
-                [InlineKeyboardButton("👑 SMS Vip", callback_data="sms_cat_vip")],
-                [InlineKeyboardButton("↩️ Trở về quản lý SMS", callback_data="sms_menu_main")],
                 [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
