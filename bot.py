@@ -825,7 +825,7 @@ async def admin_broadcast_photo_handler(update: Update, context: ContextTypes.DE
         "📝 **BƯỚC 2: NHẬP NỘI DUNG VĂN BẢN**\n\n"
         "💬 Vui lòng gửi nội dung văn bản kèm theo thông báo (có thể dùng định dạng Markdown):",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Hủy & Trở về", callback_data="admin_panel")]]),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Menu Quản Lý", callback_data="admin_panel")]]),
     )
     context.user_data["prompt_msg_id"] = msg.message_id
     return BROADCAST_TEXT
@@ -860,7 +860,7 @@ async def admin_broadcast_text_handler(update: Update, context: ContextTypes.DEF
     )
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🚀 Thông báo cho tất cả người dùng", callback_data="confirm_broadcast")],
-        [InlineKeyboardButton("↩️ Hủy bỏ", callback_data="admin_panel")]
+        [InlineKeyboardButton("↩️ Trở về Menu Quản Lý", callback_data="admin_panel")]
     ])
 
     msg = await update.message.reply_photo(photo=photo_id, caption=preview_caption, parse_mode="Markdown", reply_markup=keyboard)
@@ -1354,7 +1354,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-        return ConversationHandler.END  # Đã sửa lỗi: Trả về ConversationHandler.END để giải phóng trạng thái khi quay lại panel admin
+        return ConversationHandler.END  # Trả về ConversationHandler.END để giải phóng trạng thái khi quay lại panel admin
 
     elif data == "admin_broadcast_menu":
         if not is_admin(user.id, user.username):
@@ -1366,7 +1366,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"ℹ️ Tính năng này giúp bạn gửi ảnh kèm thông báo bảo trì, ưu đãi,... đến tất cả người dùng bot.\n\n"
             f"👇 Vui lòng gửi **hình ảnh** bạn muốn đính kèm vào tin nhắn thông báo:"
         )
-        keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
+        keyboard = [[InlineKeyboardButton("↩️ Trở về Menu Quản Lý", callback_data="admin_panel")]]
         
         if query.message.photo:
             await query.message.delete()
@@ -1491,7 +1491,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(text, reply_markup=reply_markup)
         else:
             await query.edit_message_text(text, reply_markup=reply_markup)
-        return ConversationHandler.END  # Đã sửa lỗi: Trả về ConversationHandler.END khi về menu chính
+        return ConversationHandler.END  # Trả về ConversationHandler.END khi về menu chính
 
     elif data == "cat_fb":
         text, reply_markup = fb_menu_keyboard()
