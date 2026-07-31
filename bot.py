@@ -1980,7 +1980,7 @@ def main():
             CallbackQueryHandler(button_handler)
         ],
         per_message=False
-    ]
+    )
 
     application.add_handler(conv_handler)
     
