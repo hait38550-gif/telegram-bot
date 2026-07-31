@@ -418,7 +418,7 @@ SMS_PACKAGES = {
     }
 }
 
-INPUT_LINK, INPUT_QUANTITY, INPUT_TOPUP_AMOUNT, INPUT_GITCODE, INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE = range(7)
+INPUT_LINK, INPUT_QUANTITY, INPUT_TOPUP_AMOUNT, INPUT_GITCODE, INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE, INPUT_BROADCAST_TEXT, INPUT_BROADCAST_PHOTO_TEXT = range(9)
 
 def is_admin(user_id, username):
     return str(user_id) == str(ADMIN_CHAT_ID) or (username and username == ADMIN_USERNAME.replace('@',''))
@@ -793,6 +793,51 @@ async def receive_admin_edit_user_handler(update: Update, context: ContextTypes.
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
     )
     return ConversationHandler.END
+
+# ==================== TÍNH NĂNG THÔNG BÁO CHO ADMIN ====================
+async def receive_broadcast_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return ConversationHandler.END
+
+    context.user_data["broadcast_text"] = text
+    keyboard = [
+        [InlineKeyboardButton("📢 Gửi thông báo đến tất cả người dùng", callback_data="admin_execute_broadcast_text")],
+        [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+    ]
+    await update.message.reply_text(
+        f"📝 NỘI DUNG THÔNG BÁO ĐÃ NHẬN:\n----------------------------------------\n{text}\n----------------------------------------\n👇 Bấm nút bên dưới để gửi đi:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ConversationHandler.END
+
+async def receive_broadcast_photo_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return ConversationHandler.END
+
+    if not update.message.photo:
+        await update.message.reply_text("⚠️ Vui lòng gửi một bức ảnh kèm theo nội dung văn bản (hoặc gửi ảnh trước):")
+        return INPUT_BROADCAST_PHOTO_TEXT
+
+    photo_file_id = update.message.photo[-1].file_id
+    caption = update.message.caption if update.message.caption else "Thông báo hệ thống"
+
+    context.user_data["broadcast_photo"] = photo_file_id
+    context.user_data["broadcast_caption"] = caption
+
+    keyboard = [
+        [InlineKeyboardButton("📢 Gửi ảnh & thông báo tới tất cả người dùng", callback_data="admin_execute_broadcast_photo")],
+        [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+    ]
+    await update.message.reply_photo(
+        photo=photo_file_id,
+        caption=f"🖼️ ĐÃ NHẬN ẢNH VÀ NỘI DUNG:\n----------------------------------------\n{caption}\n----------------------------------------\n👇 Bấm nút bên dưới để gửi đi:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ConversationHandler.END
+# ======================================================================
 
 async def receive_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = update.message.text.strip()
@@ -1272,9 +1317,108 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("👥 Danh sách khách hàng & Số dư", callback_data="admin_list_users")],
             [InlineKeyboardButton("🎁 Tạo & Quản lý Mã Gitcode", callback_data="admin_gitcode_menu")],
             [InlineKeyboardButton("📱 Xem gói spam sms khách hàng", callback_data="admin_sms_list_all")],
+            [InlineKeyboardButton("📢 Tạo Thông Báo Cho Người Dùng", callback_data="admin_broadcast_menu")],
             [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    # ==================== MENU XỬ LÝ BROADCAST CHO ADMIN ====================
+    elif data == "admin_broadcast_menu":
+        if not is_admin(user.id, user.username):
+            return
+        text = (
+            f"📢 TẠO THÔNG BÁO CHO NGƯỜI DÙNG\n"
+            f"----------------------------------------\n"
+            f"ℹ️ Chọn loại thông báo bạn muốn gửi đến tất cả người dùng hệ thống:"
+        )
+        keyboard = [
+            [InlineKeyboardButton("💬 Gửi mỗi văn bản", callback_data="broadcast_mode_text")],
+            [InlineKeyboardButton("🖼️ Vừa ảnh vừa văn bản", callback_data="broadcast_mode_photo")],
+            [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "broadcast_mode_text":
+        if not is_admin(user.id, user.username):
+            return
+        keyboard = [
+            [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+        ]
+        await query.edit_message_text(
+            f"💬 GỬI THÔNG BÁO DẠNG VĂN BẢN\n"
+            f"----------------------------------------\n"
+            f"💬 Vui lòng nhập nội dung văn bản thông báo bạn muốn gửi (VD: thông báo bảo trì, ưu đãi,...):",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return INPUT_BROADCAST_TEXT
+
+    elif data == "broadcast_mode_photo":
+        if not is_admin(user.id, user.username):
+            return
+        keyboard = [
+            [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+        ]
+        await query.edit_message_text(
+            f"🖼️ GỬI THÔNG BÁO ẢNH & VĂN BẢN\n"
+            f"----------------------------------------\n"
+            f"💬 Vui lòng gửi bức ảnh kèm phần caption (hoặc gửi ảnh trước) để làm thông báo:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return INPUT_BROADCAST_PHOTO_TEXT
+
+    elif data == "admin_execute_broadcast_text":
+        if not is_admin(user.id, user.username):
+            return
+        b_text = context.user_data.get("broadcast_text", "")
+        if not b_text:
+            await query.answer("⚠️ Chưa có nội dung văn bản!", show_alert=True)
+            return
+        
+        await query.edit_message_text("⏳ Đang tiến hành gửi thông báo đến tất cả người dùng...")
+        success_count = 0
+        fail_count = 0
+        for uid in USERS_DB.keys():
+            try:
+                await context.bot.send_message(chat_id=uid, text=f"🔔 **THÔNG BÁO TỪ HỆ THỐNG**\n\n{b_text}", parse_mode="Markdown")
+                success_count += 1
+            except Exception:
+                fail_count += 1
+
+        keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]
+        await query.edit_message_text(
+            f"✅ ĐÃ GỬI THÔNG BÁO HOÀN TẤT!\n\n"
+            f"✔️ Gửi thành công: {success_count} user\n"
+            f"❌ Gửi thất bại: {fail_count} user",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data == "admin_execute_broadcast_photo":
+        if not is_admin(user.id, user.username):
+            return
+        b_photo = context.user_data.get("broadcast_photo", "")
+        b_caption = context.user_data.get("broadcast_caption", "")
+        if not b_photo:
+            await query.answer("⚠️ Chưa có ảnh để gửi!", show_alert=True)
+            return
+
+        await query.edit_message_text("⏳ Đang tiến hành gửi ảnh và thông báo đến tất cả người dùng...")
+        success_count = 0
+        fail_count = 0
+        for uid in USERS_DB.keys():
+            try:
+                await context.bot.send_photo(chat_id=uid, photo=b_photo, caption=f"🔔 **THÔNG BÁO TỪ HỆ THỐNG**\n\n{b_caption}", parse_mode="Markdown")
+                success_count += 1
+            except Exception:
+                fail_count += 1
+
+        keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]
+        await query.edit_message_text(
+            f"✅ ĐÃ GỬI ẢNH & THÔNG BÁO HOÀN TẤT!\n\n"
+            f"✔️ Gửi thành công: {success_count} user\n"
+            f"❌ Gửi thất bại: {fail_count} user",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    # ======================================================================
 
     elif data == "admin_sms_list_all":
         if not is_admin(user.id, user.username):
@@ -1803,37 +1947,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ MUA NHÓM THÀNH CÔNG!\n\n"
             f"👥 Tên Group: {selected_group['name']}\n"
             f"🔗 Link Group: {selected_group['link']}\n"
-            f"💵 Đã trừ: {total_price:,.0f} VNĐ\n"
-            f"💳 Số dư còn lại: {user_data['balance']:,.0f} VNĐ\n\n"
-            f"📌 Vui lòng lưu lại link nhóm ở trên!"
+            f"💵 Đã trừ: {total_price:,.0f}đ\n"
+            f"💳 Số dư còn lại: {user_data['balance']:,.0f}đ"
         )
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
-        await query.edit_message_text(success_text, reply_markup=keyboard, disable_web_page_preview=True)
-
-        user_mention = get_user_mention(user)
-        admin_notice = (
-            f"🔔 ĐƠN MUA NHÓM MỚI!\n"
-            f"----------------------------------------\n"
-            f"👤 Khách hàng: {user_mention} (ID: `{user.id}`)\n"
-            f"👥 Group: {selected_group['name']}\n"
-            f"🔗 Link: {selected_group['link']}\n"
-            f"💵 Tổng tiền: {total_price:,.0f}đ"
-        )
-        try:
-            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, disable_web_page_preview=True)
-        except Exception:
-            pass
+        await query.edit_message_text(success_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]))
 
 def main():
-    keep_alive()
+    if BOT_TOKEN == "YOUR_BOT_TOKEN":
+        print("⚠️ LƯU Ý: Bạn chưa cấu hình BOT_TOKEN thực tế!")
+        
     application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("topup", admin_topup_cmd))
 
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(button_handler),
+            CommandHandler("start", start),
+            CommandHandler("topup", admin_topup_cmd)
         ],
         states={
             INPUT_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_link_handler)],
@@ -1843,14 +1972,20 @@ def main():
             INPUT_CREATE_CODE_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_custom_gitcode_handler)],
             INPUT_ADMIN_EDIT_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_edit_user_handler)],
             INPUT_SMS_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sms_phone_handler)],
+            INPUT_BROADCAST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_broadcast_text_handler)],
+            INPUT_BROADCAST_PHOTO_TEXT: [MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), receive_broadcast_photo_text_handler)],
         },
-        fallbacks=[CommandHandler("start", start)],
-    )
+        fallbacks=[
+            CommandHandler("start", start),
+            CallbackQueryHandler(button_handler)
+        ],
+        per_message=False
+    ]
 
     application.add_handler(conv_handler)
-    application.add_handler(CallbackQueryHandler(button_handler))
-
-    logging.info("Bot đang khởi động...")
+    
+    keep_alive()
+    print("🤖 Bot đang chạy...")
     application.run_polling()
 
 if __name__ == "__main__":
