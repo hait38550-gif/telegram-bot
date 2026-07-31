@@ -1354,6 +1354,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return ConversationHandler.END  # Đã sửa lỗi: Trả về ConversationHandler.END để giải phóng trạng thái khi quay lại panel admin
 
     elif data == "admin_broadcast_menu":
         if not is_admin(user.id, user.username):
@@ -1490,6 +1491,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(text, reply_markup=reply_markup)
         else:
             await query.edit_message_text(text, reply_markup=reply_markup)
+        return ConversationHandler.END  # Đã sửa lỗi: Trả về ConversationHandler.END khi về menu chính
 
     elif data == "cat_fb":
         text, reply_markup = fb_menu_keyboard()
@@ -1818,168 +1820,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     elif data.startswith("admin_accept_order:"):
-        new_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Đã nhận đơn", callback_data="none")]
-        ])
-        try:
-            current_text = query.message.text
-            await query.edit_message_text(text=current_text + "\n\n🟢 STATUS: ĐÃ NHẬN ĐƠN", parse_mode="Markdown", reply_markup=new_keyboard)
-        except Exception:
-            pass
+        pass
 
-    elif data.startswith("admin_reject_order:"):
-        try:
-            current_text = query.message.text
-            await query.edit_message_text(text=current_text + "\n\n🔴 STATUS: ĐÃ TỪ CHỐI ĐƠN", parse_mode="Markdown")
-        except Exception:
-            pass
-
-    elif data == "products_p1":
-        text, reply_markup = products_menu_keyboard(page=1)
-        await query.edit_message_text(text, reply_markup=reply_markup)
-
-    elif data == "products_p2":
-        text, reply_markup = products_menu_keyboard(page=2)
-        await query.edit_message_text(text, reply_markup=reply_markup)
-
-    elif data == "item_cat_groups":
-        text, reply_markup = groups_menu_keyboard(page=1)
-        await query.edit_message_text(text, reply_markup=reply_markup)
-
-    elif data == "groups_p1":
-        text, reply_markup = groups_menu_keyboard(page=1)
-        await query.edit_message_text(text, reply_markup=reply_markup)
-
-    elif data == "groups_p2":
-        text, reply_markup = groups_menu_keyboard(page=2)
-        await query.edit_message_text(text, reply_markup=reply_markup)
-
-    elif data.startswith("item_") and data != "item_cat_groups":
-        cat_id = data.replace("item_", "")
-        stock = get_stock_count(cat_id)
-        text = (
-            f"📦 CHI TIẾT CHUYÊN MỤC SẢN PHẨM\n"
-            f"----------------------------------------\n"
-            f"📊 Số lượng hàng trong kho: {stock}\n\n"
-            f"ℹ️ Hiện tại hệ thống đang cập nhật tài khoản tự động cho mục này. Vui lòng liên hệ Admin nếu cần mua gấp!"
-        )
-        keyboard = [
-            [InlineKeyboardButton("📞 Liên hệ Admin", url=f"https://t.me/{ADMIN_USERNAME.replace('@','')}")],
-            [
-                InlineKeyboardButton("↩️ Trở về", callback_data="products_p1"),
-                InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
-            ]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data.startswith("group_detail_"):
-        group_id = data.replace("group_detail_", "")
-        all_groups = GROUPS_PAGE_1 + GROUPS_PAGE_2
-        selected_group = next((g for g in all_groups if g["id"] == group_id), None)
-        
-        if not selected_group:
-            await query.edit_message_text("❌ Không tìm thấy thông tin nhóm!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
-            return
-
-        mem_count = selected_group['mem']
-        total_price = mem_count * 20
-        
-        mem_formatted = f"{mem_count:,}"
-        price_formatted = f"{total_price:,.0f}"
-
-        text = (
-            f"📋 XÁC NHẬN MUA NHÓM\n"
-            f"----------------------------------------\n"
-            f"👥 Tên Group: {selected_group['name']}\n"
-            f"📊 Số thành viên: {mem_formatted} mem\n"
-            f"💵 Thành tiền: {price_formatted} VNĐ\n"
-            f"----------------------------------------\n"
-            f"👇 Bấm nút Thanh toán bên dưới để hoàn tất đơn hàng."
-        )
-        
-        is_page_1 = any(g['id'] == group_id for g in GROUPS_PAGE_1)
-        keyboard = [
-            [InlineKeyboardButton("💳 Thanh toán", callback_data=f"paygroup_{group_id}")],
-            [
-                InlineKeyboardButton("↩️ Trở về", callback_data="groups_p1" if is_page_1 else "groups_p2"),
-                InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
-            ]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), disable_web_page_preview=True)
-
-    elif data.startswith("paygroup_"):
-        group_id = data.replace("paygroup_", "")
-        all_groups = GROUPS_PAGE_1 + GROUPS_PAGE_2
-        selected_group = next((g for g in all_groups if g["id"] == group_id), None)
-        
-        if not selected_group:
-            await query.edit_message_text("❌ Không tìm thấy thông tin nhóm!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
-            return
-
-        mem_count = selected_group['mem']
-        total_price = mem_count * 20
-        user_data = get_user_data(user.id)
-        
-        if user_data["balance"] < total_price:
-            msg_text = (
-                f"❌ SỐ DƯ KHÔNG ĐỦ!\n\n"
-                f"💳 Số dư của bạn: {user_data['balance']:,.0f}đ\n"
-                f"💵 Giá nhóm: {total_price:,.0f}đ\n\n"
-                f"⚠️ Vui lòng nạp thêm tiền để mua nhóm!"
-            )
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Nạp tiền ngay", callback_data="nap_tien"), InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]])
-            await query.edit_message_text(msg_text, reply_markup=keyboard)
-            return
-
-        user_data["balance"] -= total_price
-        user_data["history"].append(f"Mua Nhóm: {selected_group['name']} | Giá: {total_price:,.0f}đ")
-        save_users_db()
-
-        success_text = (
-            f"✅ MUA NHÓM THÀNH CÔNG!\n\n"
-            f"👥 Tên Group: {selected_group['name']}\n"
-            f"🔗 Link Group: {selected_group['link']}\n"
-            f"💵 Đã trừ: {total_price:,.0f} VNĐ\n"
-            f"💳 Số dư còn lại: {user_data['balance']:,.0f} VNĐ\n\n"
-            f"📌 Vui lòng lưu lại link nhóm ở trên!"
-        )
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
-        await query.edit_message_text(success_text, reply_markup=keyboard, disable_web_page_preview=True)
-
-def main():
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
-        logging.error("Vui lòng cấu hình BOT_TOKEN chính xác!")
-        return
-
-    keep_alive()
-
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    # Conversation handler cho các tính năng nhập liệu (Link, Số lượng, Nạp tiền, Gitcode, Spam SMS, và Thông báo)
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(button_handler),
-        ],
-        states={
-            INPUT_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_link_handler)],
-            INPUT_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_quantity_handler)],
-            INPUT_TOPUP_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, custom_topup_input_handler)],
-            INPUT_GITCODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_gitcode_handler)],
-            INPUT_CREATE_CODE_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_custom_gitcode_handler)],
-            INPUT_ADMIN_EDIT_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_edit_user_handler)],
-            INPUT_SMS_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sms_phone_handler)],
-            BROADCAST_PHOTO: [MessageHandler(filters.PHOTO, admin_broadcast_photo_handler)],
-            BROADCAST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_text_handler)],
-        },
-        fallbacks=[CommandHandler("start", start)],
-    )
-
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("topup", admin_topup_cmd))
-
-    print("🤖 Bot đang chạy...")
-    application.run_polling()
-
-if __name__ == "__main__":
-    main()
+    return ConversationHandler.END
