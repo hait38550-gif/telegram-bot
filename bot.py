@@ -176,6 +176,8 @@ GROUPS_PAGE_2 = [
     {"id": "gr_59", "name": "Du Lich Tam Dao", "link": "https://www.facebook.com/groups/666959094009922?locale=vi_VN", "mem": 30000},
 ]
 
+ALL_GROUPS = GROUPS_PAGE_1 + GROUPS_PAGE_2
+
 CATEGORIES_PAGE_1 = [
     {"id": "cat_zalo", "title": "🛡️ TÀI KHOẢN ZALO"},
     {"id": "cat_tele", "title": "✈️ TELEGRAM (+84)"},
@@ -258,102 +260,102 @@ SERVICES = {
     "tt_like": {
         "title": "🎵 TIKTOK - TĂNG TIM (LIKE)",
         "items": [
-            {"id": "tt_like_s6", "name": "⚡ S6 Like tiktok Tây Nhanh", "price": 5.51 + 20},
-            {"id": "tt_like_s7", "name": "🌍 S7 Like Tiktok tây- Không BH", "price": 5.98 + 20},
-            {"id": "tt_like_s5", "name": "🛡️ S5 Like tiktok Tây Nhanh | BH 30 ngày", "price": 19.32 + 20},
-            {"id": "tt_like_s9", "name": "👁️ S9 TikTok- ( Like ) tây + VIEW", "price": 6.34 + 20},
-            {"id": "tt_like_s4", "name": "🇻🇳 S4 like tiktok việt", "price": 10.79 + 20},
-            {"id": "tt_like_s2", "name": "🔥 S2 Like tiktok việt high", "price": 19.5 + 20},
-            {"id": "tt_like_re", "name": "💸 Like TikTok việt giá rẻ", "price": 8.45 + 20},
+            {"id": "tt_like_s6", "name": "⚡ S6 Like tiktok Tây Nhanh", "price": 25.51},
+            {"id": "tt_like_s7", "name": "🌍 S7 Like Tiktok tây- Không BH", "price": 25.98},
+            {"id": "tt_like_s5", "name": "🛡️ S5 Like tiktok Tây Nhanh | BH 30 ngày", "price": 39.32},
+            {"id": "tt_like_s9", "name": "👁️ S9 TikTok- ( Like ) tây + VIEW", "price": 26.34},
+            {"id": "tt_like_s4", "name": "🇻🇳 S4 like tiktok việt", "price": 30.79},
+            {"id": "tt_like_s2", "name": "🔥 S2 Like tiktok việt high", "price": 39.5},
+            {"id": "tt_like_re", "name": "💸 Like TikTok việt giá rẻ", "price": 28.45},
         ]
     },
     "tt_follow": {
         "title": "👤 TIKTOK - TĂNG THEO DÕI",
         "items": [
-            {"id": "tt_fol_clone", "name": "🤖 Tiktok Follow clone (19-6)", "price": 67.03 + 20},
-            {"id": "tt_fol_s4", "name": "🇻🇳 S4 Follow TikTok Việt", "price": 39.0 + 20},
-            {"id": "tt_fol_s5", "name": "✨ S5 Follow TikTok sale new", "price": 31.2 + 20},
-            {"id": "tt_fol_s6", "name": "📈 S6 Follow tiktok việt ổn định", "price": 27.3 + 20},
-            {"id": "tt_fol_high", "name": "🚀 Follow TikTok Việt High", "price": 55.9 + 20},
-            {"id": "tt_fol_s2_high", "name": "⭐ S2 Follow TikTok Việt High", "price": 89.7 + 20},
+            {"id": "tt_fol_clone", "name": "🤖 Tiktok Follow clone (19-6)", "price": 87.03},
+            {"id": "tt_fol_s4", "name": "🇻🇳 S4 Follow TikTok Việt", "price": 59.0},
+            {"id": "tt_fol_s5", "name": "✨ S5 Follow TikTok sale new", "price": 51.2},
+            {"id": "tt_fol_s6", "name": "📈 S6 Follow tiktok việt ổn định", "price": 47.3},
+            {"id": "tt_fol_high", "name": "🚀 Follow TikTok Việt High", "price": 75.9},
+            {"id": "tt_fol_s2_high", "name": "⭐ S2 Follow TikTok Việt High", "price": 109.7},
         ]
     },
     "tt_view": {
         "title": "👁️ TIKTOK - TĂNG LƯỢT XEM (VIEW)",
         "items": [
-            {"id": "tt_view_s64", "name": "📊 S64 View Tiktok | KBH | min:100", "price": 2.15 + 20},
-            {"id": "tt_view_s11", "name": "📉 S11 View Tiktok | KBH | min:100 | Không BH", "price": 1.0 + 20},
-            {"id": "tt_view_s6", "name": "📌 S6 View Tiktok | KBH | min:100 | Không BH", "price": 2.18 + 20},
-            {"id": "tt_view_st", "name": "🚀 View tiktok siêu tốc | KBH | dự phòng", "price": 2.15 + 20},
-            {"id": "tt_view_s3", "name": "💎 S3 view tiktok sale | Không tụt", "price": 1625.0 + 20},
+            {"id": "tt_view_s64", "name": "📊 S64 View Tiktok | KBH | min:100", "price": 22.15},
+            {"id": "tt_view_s11", "name": "📉 S11 View Tiktok | KBH | min:100 | Không BH", "price": 21.0},
+            {"id": "tt_view_s6", "name": "📌 S6 View Tiktok | KBH | min:100 | Không BH", "price": 22.18},
+            {"id": "tt_view_st", "name": "🚀 View tiktok siêu tốc | KBH | dự phòng", "price": 22.15},
+            {"id": "tt_view_s3", "name": "💎 S3 view tiktok sale | Không tụt", "price": 1645.0},
         ]
     },
     "tt_cmt": {
         "title": "💬 TIKTOK - TĂNG BÌNH LUẬN",
         "items": [
-            {"id": "tt_cmt_s4", "name": "⚡ S4 Cmt Tiktok Việt nhanh", "price": 195.0 + 20},
-            {"id": "tt_cmt_s6", "name": "🛡️ S6 cmt tiktok Việt High ổn định", "price": 149.5 + 20},
-            {"id": "tt_cmt_s7", "name": "✨ S7 cmt tiktok Việt New", "price": 143.0 + 20},
+            {"id": "tt_cmt_s4", "name": "⚡ S4 Cmt Tiktok Việt nhanh", "price": 215.0},
+            {"id": "tt_cmt_s6", "name": "🛡️ S6 cmt tiktok Việt High ổn định", "price": 169.5},
+            {"id": "tt_cmt_s7", "name": "✨ S7 cmt tiktok Việt New", "price": 163.0},
         ]
     },
     "tt_share": {
         "title": "🔄 TIKTOK - TĂNG SHARE",
         "items": [
-            {"id": "tt_share_s2_sale", "name": "🏷️ S2 Share video tiktok Sale", "price": 13000.0 + 20},
-            {"id": "tt_share_live", "name": "🔴 Share tiktok live Việt Nam", "price": 18.85 + 20},
-            {"id": "tt_share_video", "name": "🇻🇳 Share video tiktok Việt Nam", "price": 15.6 + 20},
-            {"id": "tt_share_s2_cheap", "name": "💸 S2 Share video tiktok giá rẻ | KBH", "price": 4.9 + 20},
+            {"id": "tt_share_s2_sale", "name": "🏷️ S2 Share video tiktok Sale", "price": 13020.0},
+            {"id": "tt_share_live", "name": "🔴 Share tiktok live Việt Nam", "price": 38.85},
+            {"id": "tt_share_video", "name": "🇻🇳 Share video tiktok Việt Nam", "price": 35.6},
+            {"id": "tt_share_s2_cheap", "name": "💸 S2 Share video tiktok giá rẻ | KBH", "price": 24.9},
         ]
     },
     "tt_save": {
         "title": "💾 TIKTOK - TĂNG SAVE (LƯU VIDEO)",
         "items": [
-            {"id": "tt_save_s2", "name": "⚡ S2 save video Việt nhanh", "price": 11.05 + 20},
-            {"id": "tt_save_s3", "name": "🌍 S3 save video [Tài nguyên Tây] | KBH", "price": 1.39 + 20},
+            {"id": "tt_save_s2", "name": "⚡ S2 save video Việt nhanh", "price": 31.05},
+            {"id": "tt_save_s3", "name": "🌍 S3 save video [Tài nguyên Tây] | KBH", "price": 21.39},
         ]
     },
     "tt_live_vn": {
         "title": "🔴 TIKTOK - LIVE VIỆT NAM",
         "items": [
-            {"id": "live_vn_30p", "name": "⏱️ Live Tiktok việt - 30 phút (New - Nên dùng)", "price": 214.89 + 20},
-            {"id": "live_vn_60p", "name": "⏱️ Live Tiktok việt - 60 phút (New - Nên dùng)", "price": 357.36 + 20},
-            {"id": "live_vn_90p", "name": "⏱️ Live Tiktok việt - 90 phút (New - Nên dùng)", "price": 536.04 + 20},
-            {"id": "live_vn_120p", "name": "⏱️ Live Tiktok việt - 120 phút (New - Nên dùng)", "price": 714.71 + 20},
-            {"id": "live_vn_180p", "name": "⏱️ Live Tiktok việt - 180 phút (New - Nên dùng)", "price": 1072.07 + 20},
-            {"id": "live_vn_360p", "name": "⏱️ Live Tiktok việt - 360 phút (New - Nên dùng)", "price": 1429.43 + 20},
+            {"id": "live_vn_30p", "name": "⏱️ Live Tiktok việt - 30 phút (New - Nên dùng)", "price": 234.89},
+            {"id": "live_vn_60p", "name": "⏱️ Live Tiktok việt - 60 phút (New - Nên dùng)", "price": 377.36},
+            {"id": "live_vn_90p", "name": "⏱️ Live Tiktok việt - 90 phút (New - Nên dùng)", "price": 556.04},
+            {"id": "live_vn_120p", "name": "⏱️ Live Tiktok việt - 120 phút (New - Nên dùng)", "price": 734.71},
+            {"id": "live_vn_180p", "name": "⏱️ Live Tiktok việt - 180 phút (New - Nên dùng)", "price": 1092.07},
+            {"id": "live_vn_360p", "name": "⏱️ Live Tiktok việt - 360 phút (New - Nên dùng)", "price": 1449.43},
         ]
     },
     "tt_mat_live": {
         "title": "👀 TIKTOK - MẮT LIVESTREAM",
         "items": [
-            {"id": "mat_live_30p", "name": "🛡️ Mắt live 30 phút (Ổn định)", "price": 72.15 + 20},
-            {"id": "mat_live_60p", "name": "⭐ Mắt live 60 phút (Nên dùng)", "price": 118.95 + 20},
-            {"id": "mat_live_90p", "name": "⭐ Mắt live 90 phút (Nên dùng)", "price": 176.15 + 20},
-            {"id": "mat_live_120p", "name": "⭐ Mắt live 120 phút (Nên dùng)", "price": 260.0 + 20},
-            {"id": "mat_live_180p", "name": "⭐ Mắt live 180 phút (Nên dùng)", "price": 392.6 + 20},
+            {"id": "mat_live_30p", "name": "🛡️ Mắt live 30 phút (Ổn định)", "price": 92.15},
+            {"id": "mat_live_60p", "name": "⭐ Mắt live 60 phút (Nên dùng)", "price": 138.95},
+            {"id": "mat_live_90p", "name": "⭐ Mắt live 90 phút (Nên dùng)", "price": 196.15},
+            {"id": "mat_live_120p", "name": "⭐ Mắt live 120 phút (Nên dùng)", "price": 280.0},
+            {"id": "mat_live_180p", "name": "⭐ Mắt live 180 phút (Nên dùng)", "price": 412.6},
         ]
     },
     "tt_mat_tay": {
         "title": "🌍 TIKTOK - MẮT LIVE TÂY",
         "items": [
-            {"id": "mat_tay_30p", "name": "⚡ Mắt live Tiktok Tây | Gói 30p (Nhanh)", "price": 130.0 + 20},
-            {"id": "mat_tay_60p", "name": "⚡ Mắt live Tiktok Tây | Gói 60p (Nhanh)", "price": 257.4 + 20},
-            {"id": "mat_tay_90p", "name": "⚡ Mắt live Tiktok Tây | Gói 90p (Nhanh)", "price": 383.5 + 20},
-            {"id": "mat_tay_120p", "name": "⚡ Mắt live Tiktok Tây | Gói 120p (Nhanh)", "price": 500.5 + 20},
-            {"id": "mat_tay_180p", "name": "⚡ Mắt live Tiktok Tây | Gói 180p (Nhanh)", "price": 734.5 + 20},
-            {"id": "mat_tay_240p", "name": "⚡ Mắt live Tiktok Tây | Gói 240p (Nhanh)", "price": 968.5 + 20},
-            {"id": "mat_tay_270p", "name": "⚡ Mắt live Tiktok Tây | Gói 270p (Nhanh)", "price": 1072.5 + 20},
+            {"id": "mat_tay_30p", "name": "⚡ Mắt live Tiktok Tây | Gói 30p (Nhanh)", "price": 150.0},
+            {"id": "mat_tay_60p", "name": "⚡ Mắt live Tiktok Tây | Gói 60p (Nhanh)", "price": 277.4},
+            {"id": "mat_tay_90p", "name": "⚡ Mắt live Tiktok Tây | Gói 90p (Nhanh)", "price": 403.5},
+            {"id": "mat_tay_120p", "name": "⚡ Mắt live Tiktok Tây | Gói 120p (Nhanh)", "price": 520.5},
+            {"id": "mat_tay_180p", "name": "⚡ Mắt live Tiktok Tây | Gói 180p (Nhanh)", "price": 754.5},
+            {"id": "mat_tay_240p", "name": "⚡ Mắt live Tiktok Tây | Gói 240p (Nhanh)", "price": 988.5},
+            {"id": "mat_tay_270p", "name": "⚡ Mắt live Tiktok Tây | Gói 270p (Nhanh)", "price": 1092.5},
         ]
     },
     "tt_vip_mat": {
         "title": "👑 TIKTOK - VIP MẮT LIVE STREAM",
         "items": [
-            {"id": "vip_mat_15p", "name": "⭐ Vip mắt Tiktok 15 phút", "price": 234.0 + 20},
-            {"id": "vip_mat_30p", "name": "⭐ Vip mắt Tiktok 30 phút", "price": 461.5 + 20},
-            {"id": "vip_mat_60p", "name": "⭐ Vip mắt Tiktok 60 phút", "price": 728.0 + 20},
-            {"id": "vip_mat_90p", "name": "⭐ Vip mắt Tiktok 90 phút", "price": 936.0 + 20},
-            {"id": "vip_mat_120p", "name": "⭐ Vip mắt Tiktok 120 phút", "price": 1131.0 + 20},
-            {"id": "vip_live", "name": "❤️ Tim Live stream (Nên dùng tăng mắt)", "price": 0.5 + 20},
+            {"id": "vip_mat_15p", "name": "⭐ Vip mắt Tiktok 15 phút", "price": 254.0},
+            {"id": "vip_mat_30p", "name": "⭐ Vip mắt Tiktok 30 phút", "price": 481.5},
+            {"id": "vip_mat_60p", "name": "⭐ Vip mắt Tiktok 60 phút", "price": 748.0},
+            {"id": "vip_mat_90p", "name": "⭐ Vip mắt Tiktok 90 phút", "price": 956.0},
+            {"id": "vip_mat_120p", "name": "⭐ Vip mắt Tiktok 120 phút", "price": 1151.0},
+            {"id": "vip_live", "name": "❤️ Tim Live stream (Nên dùng tăng mắt)", "price": 20.5},
         ]
     },
     "yt_sub": {
@@ -424,6 +426,8 @@ def is_admin(user_id, username):
     return str(user_id) == str(ADMIN_CHAT_ID) or (username and username == ADMIN_USERNAME.replace('@',''))
 
 def get_stock_count(cat_id):
+    if cat_id == "cat_groups":
+        return len(ALL_GROUPS)
     file_path = f"data/{cat_id}.txt"
     if not os.path.exists(file_path):
         return 0
@@ -452,9 +456,7 @@ def get_user_mention(user):
         name = html.escape(user.first_name if user.first_name else "Khách hàng")
         return f'<a href="tg://user?id={user.id}">{name}</a>'
 
-# ==================== HÀM ĐẾM NGƯỢC VÀ TỰ ĐỘNG XÓA TIN NHẮN (30S) ====================
 async def auto_delete_with_countdown(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, base_text: str, seconds: int = 30):
-    """Cập nhật đếm ngược thời gian rồi tự động xóa tin nhắn"""
     async def countdown_task():
         current_sec = seconds
         while current_sec > 0:
@@ -478,8 +480,6 @@ async def auto_delete_with_countdown(context: ContextTypes.DEFAULT_TYPE, chat_id
             pass
 
     asyncio.create_task(countdown_task())
-
-# ==================== CÁC HÀM GIAO DIỆN BAN ĐẦU CHUẨN 100% ====================
 
 def main_menu_keyboard(user_id, username, first_name="bạn"):
     balance = get_user_balance(user_id)
@@ -528,7 +528,7 @@ def products_menu_keyboard(page=1):
     keyboard = []
     for item in items:
         if item['id'] == "cat_groups":
-            display_name = item['title']
+            display_name = f"{item['title']} (Kho: {len(ALL_GROUPS)})"
         else:
             stock = get_stock_count(item['id'])
             display_name = f"{item['title']} (Còn: {stock})"
@@ -569,7 +569,7 @@ def groups_menu_keyboard(page=1):
         f"📋 <b>DANH SÁCH NHÓM FACEBOOK</b>\n"
         f"════════════════════════════════\n"
         f"📄 Trang {page}/2\n\n"
-        f"👇 <i>Chọn nhóm bên dưới để xem thông tin chi tiết:</i> "
+        f"👇 <i>Chọn nhóm bên dưới để xem thông tin chi tiết & mua:</i> "
     )
     
     nav_buttons = []
@@ -674,8 +674,6 @@ def service_items_keyboard(cat_key):
         InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
     ])
     return text, InlineKeyboardMarkup(keyboard)
-
-# ==================== HANDLER XỬ LÝ LỆNH VÀ FLOW ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1035,7 +1033,6 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     return ConversationHandler.END
 
-# ==================== SPAM SMS HANDLER ====================
 async def receive_sms_phone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
     user = update.effective_user
@@ -1148,8 +1145,6 @@ async def query_edit_or_replace_admin(update: Update, context: ContextTypes.DEFA
     else:
         return await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
 
-# ==================== BROADCAST CẢ PHOTO / VIDEO / TEXT ====================
-
 async def receive_broadcast_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not is_admin(user.id, user.username):
@@ -1241,8 +1236,6 @@ async def receive_broadcast_text_handler(update: Update, context: ContextTypes.D
     context.user_data["prompt_msg_id"] = msg.message_id
     return ConversationHandler.END
 
-# ==================== CALLBACK BUTTON HANDLER ====================
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1256,7 +1249,79 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_final_order(update, context, cmt_type)
         return
 
-    if data == "sms_menu_main":
+    # ================= XỬ LÝ MUA NHÓM FACEBOOK (GIÁ = MEM * 18) =================
+    elif data.startswith("group_detail_"):
+        gr_id = data.replace("group_detail_", "")
+        group_info = next((g for g in ALL_GROUPS if g["id"] == gr_id), None)
+        if group_info:
+            mem_str = f"{group_info['mem']:,}".replace(",", ".")
+            price_val = group_info["mem"] * 18
+            text = (
+                f"👥 <b>THÔNG TIN CHI TIẾT NHÓM FACEBOOK</b>\n"
+                f"════════════════════════════════\n"
+                f"🏷️ <b>Tên nhóm:</b> {html.escape(group_info['name'])}\n"
+                f"👥 <b>Thành viên:</b> <code>{mem_str} thành viên</code>\n"
+                f"🔗 <b>Đường dẫn:</b> <a href=\"{group_info['link']}\">Truy cập Group gốc</a>\n"
+                f"💵 <b>Giá sở hữu:</b> <code>{price_val:,.0f} VNĐ</code>\n"
+                f"════════════════════════════════\n"
+                f"👇 <i>Bấm nút bên dưới để tiến hành thanh toán mua nhóm tự động:</i>"
+            )
+            keyboard = [
+                [InlineKeyboardButton(f"💳 Mua Nhóm Ngay ({price_val:,.0f}đ)", callback_data=f"buy_group_now:{gr_id}")],
+                [InlineKeyboardButton("↩️ Trở về danh sách nhóm", callback_data="item_cat_groups")],
+                [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+            ]
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard), disable_web_page_preview=True)
+        else:
+            await query.answer("⚠️ Không tìm thấy thông tin nhóm!", show_alert=True)
+
+    elif data.startswith("buy_group_now:"):
+        gr_id = data.replace("buy_group_now:", "")
+        group_info = next((g for g in ALL_GROUPS if g["id"] == gr_id), None)
+        if group_info:
+            price_val = group_info["mem"] * 18
+            user_data = get_user_data(user.id)
+            if user_data["balance"] < price_val:
+                await query.answer(f"❌ Số dư không đủ! Bạn cần {price_val:,.0f}đ để mua nhóm này.", show_alert=True)
+                return
+            
+            user_data["balance"] -= price_val
+            user_data["history"].append(f"Mua Nhóm FB: {group_info['name']} | Giá: {price_val:,.0f}đ | Link: {group_info['link']}")
+            save_users_db()
+
+            success_text = (
+                f"🎉 <b>MUA NHÓM FACEBOOK THÀNH CÔNG!</b>\n"
+                f"════════════════════════════════\n"
+                f"🏷️ <b>Tên nhóm:</b> {html.escape(group_info['name'])}\n"
+                f"🔗 <b>Link quản trị nhóm:</b> <code>{group_info['link']}</code>\n"
+                f"💵 <b>Đã thanh toán:</b> <code>{price_val:,.0f} VNĐ</code>\n"
+                f"💳 <b>Số dư còn lại:</b> <code>{user_data['balance']:,.0f} VNĐ</code>\n\n"
+                f"📌 <i>Admin đã nhận yêu cầu bàn giao quyền sở hữu nhóm cho bạn qua tài khoản Telegram này.</i>"
+            )
+            keyboard = [
+                [InlineKeyboardButton("📋 Xem danh sách nhóm khác", callback_data="item_cat_groups")],
+                [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+            ]
+            await query.edit_message_text(success_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+            user_mention = get_user_mention(user)
+            admin_notice = (
+                f"🔔 <b>CÓ KHÁCH MUA NHÓM FACEBOOK!</b>\n"
+                f"----------------------------------------\n"
+                f"👤 Khách: {user_mention} (ID: <code>{user.id}</code>)\n"
+                f"🏷️ Nhóm: {html.escape(group_info['name'])}\n"
+                f"🔗 Link: {group_info['link']}\n"
+                f"💵 Giá: {price_val:,.0f}đ"
+            )
+            try:
+                await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML")
+            except Exception:
+                pass
+        else:
+            await query.answer("⚠️ Giao dịch thất bại, nhóm không tồn tại!", show_alert=True)
+    # ==============================================================================
+
+    elif data == "sms_menu_main":
         user_sms_list = SMS_DB.get(user.id, [])
         active_sms = [s for s in user_sms_list if s["expire_time"] > time.time()]
         
@@ -1719,7 +1784,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             keyboard.append([InlineKeyboardButton("↩️ Trở về", callback_data="admin_gitcode_menu")])
 
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("delete_gc:"):
         if not is_admin(user.id, user.username):
@@ -1744,7 +1809,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard.append([InlineKeyboardButton(f"🗑️ Xóa mã: {code}", callback_data=f"delete_gc:{code}")])
             keyboard.append([InlineKeyboardButton("↩️ Trở về", callback_data="admin_gitcode_menu")])
 
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("create_gc:"):
         if not is_admin(user.id, user.username):
@@ -1766,7 +1831,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📋 Xem Danh Sách Gitcode", callback_data="admin_list_gitcodes")],
             [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]
         ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "create_gc_custom":
         if not is_admin(user.id, user.username):
@@ -1896,7 +1961,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # ==================== NẠP TIỀN THÀNH CÔNG: TỰ XÓA SAU 30S CÓ ĐẾM NGƯỢC ====================
     elif data.startswith("admin_approve_topup:"):
         _, target_id_str, amount_str = data.split(":")
         target_id, amount = int(target_id_str), float(amount_str)
@@ -1952,7 +2016,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # ==================== ĐÃ SỬA LỖI PARSE_MODE Ở ĐÂY ====================
     elif data.startswith("admin_accept_order:"):
         new_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🟢 ĐÃ NHẬN ĐƠN", callback_data="none")]
