@@ -1249,7 +1249,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_final_order(update, context, cmt_type)
         return
 
-    # ================= XỬ LÝ MUA NHÓM FACEBOOK (GIÁ = MEM * 18) =================
+    # ================= XỬ LÝ MUA NHÓM FACEBOOK (KIỂM TRA SỐ DƯ) =================
     elif data.startswith("group_detail_"):
         gr_id = data.replace("group_detail_", "")
         group_info = next((g for g in ALL_GROUPS if g["id"] == gr_id), None)
@@ -1281,10 +1281,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if group_info:
             price_val = group_info["mem"] * 18
             user_data = get_user_data(user.id)
-            if user_data["balance"] < price_val:
-                await query.answer(f"❌ Số dư không đủ! Bạn cần {price_val:,.0f}đ để mua nhóm này.", show_alert=True)
-                return
             
+            # Kiểm tra số dư không đủ -> Báo lỗi & hiển thị nút Nạp tiền / Menu giống các dịch vụ khác
+            if user_data["balance"] < price_val:
+                msg_text = (
+                    f"❌ <b>SỐ DƯ KHÔNG ĐỦ THANH TOÁN!</b>\n\n"
+                    f"💳 Số dư hiện tại: <code>{user_data['balance']:,.0f}đ</code>\n"
+                    f"💵 Cần thanh toán: <code>{price_val:,.0f}đ</code>\n\n"
+                    f"⚠️ <i>Vui lòng nạp thêm tiền để tiếp tục.</i>"
+                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💳 Nạp Tiền Ngay", callback_data="nap_tien"), InlineKeyboardButton("🏠 Menu", callback_data="menu_main")],
+                    [InlineKeyboardButton("↩️ Trở về danh sách nhóm", callback_data="item_cat_groups")]
+                ])
+                await query.edit_message_text(msg_text, parse_mode="HTML", reply_markup=keyboard)
+                return
+
             user_data["balance"] -= price_val
             user_data["history"].append(f"Mua Nhóm FB: {group_info['name']} | Giá: {price_val:,.0f}đ | Link: {group_info['link']}")
             save_users_db()
