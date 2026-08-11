@@ -420,7 +420,13 @@ SMS_PACKAGES = {
     }
 }
 
-INPUT_LINK, INPUT_QUANTITY, INPUT_TOPUP_AMOUNT, INPUT_GITCODE, INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE, INPUT_BROADCAST_PHOTO, INPUT_BROADCAST_TEXT = range(9)
+# Khai báo các trạng thái Conversation (Đã thêm 3 trạng thái mới ở cuối)
+(
+    INPUT_LINK, INPUT_QUANTITY, INPUT_TOPUP_AMOUNT, INPUT_GITCODE, 
+    INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE, 
+    INPUT_BROADCAST_PHOTO, INPUT_BROADCAST_TEXT, 
+    INPUT_PRIVATE_MSG_USER_ID, INPUT_PRIVATE_MSG_PHOTO, INPUT_PRIVATE_MSG_TEXT
+) = range(12)
 
 def is_admin(user_id, username):
     return str(user_id) == str(ADMIN_CHAT_ID) or (username and username == ADMIN_USERNAME.replace('@',''))
@@ -1236,6 +1242,136 @@ async def receive_broadcast_text_handler(update: Update, context: ContextTypes.D
     context.user_data["prompt_msg_id"] = msg.message_id
     return ConversationHandler.END
 
+# ==================== CÁC HÀM XỬ LÝ GỬI THÔNG BÁO RIÊNG (TÍNH NĂNG MỚI) ====================
+async def receive_private_msg_user_id_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return ConversationHandler.END
+
+    target_id_str = update.message.text.strip()
+    
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    bot_msg_id = context.user_data.get("prompt_msg_id")
+    if bot_msg_id:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=bot_msg_id)
+        except Exception:
+            pass
+
+    try:
+        target_id = int(target_id_str)
+    except ValueError:
+        msg = await update.message.reply_text("⚠️ ID không hợp lệ! Vui lòng nhập lại ID (chỉ bao gồm số):")
+        context.user_data["prompt_msg_id"] = msg.message_id
+        return INPUT_PRIVATE_MSG_USER_ID
+
+    context.user_data["private_target_id"] = target_id
+
+    text = (
+        f"👤 <b>GỬI THÔNG BÁO RIÊNG CHO ID:</b> <code>{target_id}</code>\n"
+        f"----------------------------------------\n"
+        f"ℹ️ Bạn có thể gửi thông báo kèm <b>Ảnh</b>, <b>Video</b> hoặc <b>Chỉ văn bản</b>.\n\n"
+        f"💬 <i>Vui lòng gửi 01 HÌNH ẢNH hoặc 01 VIDEO đính kèm (hoặc bấm nút Bỏ qua bên dưới để chỉ gửi chữ):</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("⏩ Bỏ qua (Chỉ gửi văn bản)", callback_data="skip_private_media")],
+        [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]
+    ]
+    msg = await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    context.user_data["prompt_msg_id"] = msg.message_id
+    return INPUT_PRIVATE_MSG_PHOTO
+
+async def receive_private_msg_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return ConversationHandler.END
+
+    if update.message.photo:
+        context.user_data["private_media_type"] = "photo"
+        context.user_data["private_media_id"] = update.message.photo[-1].file_id
+    elif update.message.video:
+        context.user_data["private_media_type"] = "video"
+        context.user_data["private_media_id"] = update.message.video.file_id
+    else:
+        keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
+        await update.message.reply_text("⚠️ Vui lòng gửi <b>Hình ảnh</b>, <b>Video</b> hoặc dùng nút <b>Bỏ qua</b>!", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        return INPUT_PRIVATE_MSG_PHOTO
+
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    bot_msg_id = context.user_data.get("prompt_msg_id")
+    if bot_msg_id:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=bot_msg_id)
+        except Exception:
+            pass
+
+    target_id = context.user_data.get("private_target_id", "Không rõ")
+    text = (
+        f"👤 <b>GỬI THÔNG BÁO RIÊNG TỚI:</b> <code>{target_id}</code>\n"
+        f"----------------------------------------\n"
+        f"✅ Đã nhận đính kèm media thành công.\n\n"
+        f"💬 <i>Vui lòng gửi <b>Nội dung văn bản</b> cho thông báo:</i>"
+    )
+    keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
+    msg = await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    context.user_data["prompt_msg_id"] = msg.message_id
+    return INPUT_PRIVATE_MSG_TEXT
+
+async def receive_private_msg_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return ConversationHandler.END
+
+    text_content = update.message.text
+    if not text_content:
+        return INPUT_PRIVATE_MSG_TEXT
+
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    bot_msg_id = context.user_data.get("prompt_msg_id")
+    if bot_msg_id:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=bot_msg_id)
+        except Exception:
+            pass
+
+    target_id = context.user_data.get("private_target_id")
+    media_type = context.user_data.get("private_media_type", "none")
+    media_id = context.user_data.get("private_media_id")
+
+    success = False
+    try:
+        if media_type == "photo":
+            await context.bot.send_photo(chat_id=target_id, photo=media_id, caption=text_content, parse_mode="HTML")
+        elif media_type == "video":
+            await context.bot.send_video(chat_id=target_id, video=media_id, caption=text_content, parse_mode="HTML")
+        else:
+            await context.bot.send_message(chat_id=target_id, text=text_content, parse_mode="HTML")
+        success = True
+    except Exception as e:
+        logging.error(f"Lỗi gửi tin nhắn riêng cho {target_id}: {e}")
+
+    if success:
+        result_text = f"✅ <b>GỬI THÀNH CÔNG!</b>\nĐã gửi tin nhắn riêng cho ID: <code>{target_id}</code>"
+    else:
+        result_text = f"❌ <b>GỬI THẤT BẠI!</b>\nKhông thể gửi tin nhắn. Có thể ID không tồn tại hoặc khách hàng đã chặn Bot."
+
+    keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
+    await update.message.reply_text(result_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    return ConversationHandler.END
+# ==============================================================================
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1282,7 +1418,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             price_val = group_info["mem"] * 18
             user_data = get_user_data(user.id)
             
-            # Kiểm tra số dư không đủ -> Báo lỗi & hiển thị nút Nạp tiền / Menu giống các dịch vụ khác
             if user_data["balance"] < price_val:
                 msg_text = (
                     f"❌ <b>SỐ DƯ KHÔNG ĐỦ THANH TOÁN!</b>\n\n"
@@ -1518,9 +1653,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🎁 Tạo & Quản lý Gitcode", callback_data="admin_gitcode_menu")],
             [InlineKeyboardButton("📱 Xem các gói SMS đang chạy", callback_data="admin_sms_list_all")],
             [InlineKeyboardButton("📢 Tạo Thông Báo Broadcast", callback_data="admin_broadcast_menu")],
+            [InlineKeyboardButton("👤 Gửi Thông Báo Riêng (Cá Nhân)", callback_data="admin_private_msg_menu")], # Nút tích hợp mới
             [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
         ]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "admin_private_msg_menu":
+        if not is_admin(user.id, user.username):
+            return
+        text = (
+            f"👤 <b>GỬI THÔNG BÁO RIÊNG CHO KHÁCH</b>\n"
+            f"----------------------------------------\n"
+            f"💬 <i>Vui lòng nhập ID Telegram của khách hàng bạn muốn gửi tin nhắn riêng:</i>"
+        )
+        keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
+        msg = await query_edit_or_replace_admin(update, context, text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        context.user_data["prompt_msg_id"] = msg.message_id
+        return INPUT_PRIVATE_MSG_USER_ID
+
+    elif data == "skip_private_media":
+        if not is_admin(user.id, user.username):
+            return
+        context.user_data["private_media_type"] = "none"
+        context.user_data["private_media_id"] = None
+        target_id = context.user_data.get("private_target_id", "Không rõ")
+        
+        text = (
+            f"👤 <b>GỬI THÔNG BÁO RIÊNG (CHỈ VĂN BẢN)</b>\n"
+            f"----------------------------------------\n"
+            f"🎯 <b>Người nhận:</b> <code>{target_id}</code>\n"
+            f"💬 <i>Vui lòng nhập nội dung văn bản cho thông báo:</i>"
+        )
+        keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
+        msg = await query_edit_or_replace_admin(update, context, text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        context.user_data["prompt_msg_id"] = msg.message_id
+        return INPUT_PRIVATE_MSG_TEXT
 
     elif data == "admin_broadcast_menu":
         if not is_admin(user.id, user.username):
@@ -1532,7 +1699,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             f"📢 <b>TẠO THÔNG BÁO BROADCAST</b>\n"
             f"----------------------------------------\n"
-            f"ℹ️ Cho phép gửi thông báo kèm **Ảnh**, **Video** hoặc **Chỉ văn bản**.\n\n"
+            f"ℹ️ Cho phép gửi thông báo kèm <b>Ảnh</b>, <b>Video</b> hoặc <b>Chỉ văn bản</b>.\n\n"
             f"💬 <i>Vui lòng gửi 01 HÌNH ẢNH hoặc 01 VIDEO đính kèm cho thông báo (hoặc bấm nút Bỏ qua bên dưới):</i>"
         )
         keyboard = [
@@ -2112,6 +2279,13 @@ def main():
                 CallbackQueryHandler(button_handler, pattern="^skip_broadcast_media$")
             ],
             INPUT_BROADCAST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_broadcast_text_handler)],
+            # Thêm các state xử lý Gửi thông báo riêng mới
+            INPUT_PRIVATE_MSG_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_private_msg_user_id_handler)],
+            INPUT_PRIVATE_MSG_PHOTO: [
+                MessageHandler(filters.PHOTO | filters.VIDEO, receive_private_msg_media_handler),
+                CallbackQueryHandler(button_handler, pattern="^skip_private_media$")
+            ],
+            INPUT_PRIVATE_MSG_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_private_msg_text_handler)],
         },
         fallbacks=[
             CommandHandler("start", start),
