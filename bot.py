@@ -4,6 +4,7 @@ import logging
 import time
 import html
 import asyncio
+import requests
 from threading import Thread
 from flask import Flask
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -54,6 +55,44 @@ BANK_INFO = {
 DB_FILE = "users_db.json"
 GITCODE_DB_FILE = "gitcode_db.json"
 SMS_DB_FILE = "sms_db.json"
+
+# ==================== CẤU HÌNH SMM API ====================
+SMM_SERVICES_FIXED = {
+    "like_s2_clone": 6245,       # MC 6245 S2 Like clone nhanh
+    "fol_clone_tay": 6444,       # MC 6444 Follow Tây + page nhanh
+    "cmt_s2_sale": 6452,         # S2 Cmt Sale
+    "page_s7_clone": 6450,       # MC 6450 S7 Like page + follow clone
+    "group_mem_s3": 6267,        # MC 6267 S3 Mem group
+    "share_article": 6301,       # MC 6301 Share bài viết
+    "view_video_reels": 6453,    # MC 6453 Facebook view - Video/Reels
+    "mat_live_sv2": 6292,        # MC 6292 Sv2 mắt sale
+    "story_s32_tay": 6483,       # MC 6483 S32 - view story - tây clone
+    "tt_like_s6": 6484,          # MC 6484 S6 Like tiktok Tây Nhanh
+    "tt_fol_quality": 6641,      # MC 6641 Theo dõi TikTok chất lượng
+    "tt_view_s6": 6491,          # MC 6491 S6 View Tiktok
+    "tt_cmt_s6": 6317,           # MC 6317 S6 cmt tiktok Việt High
+    "tt_share_s2": 6495,         # MC 6495 S2 Share video tiktok giá rẻ
+    "yt_mc_6505": 6505,          # MC 6505 YouTube Subscribers
+    "yt_mc_6508": 6508,          # MC 6508 Like rẻ nhanh
+    "yt_mc_6510": 6510,          # MC 6510 S1 Mắt Live YTB
+    "ig_mc_6274": 6274,          # MC 6274 Like Instagram Việt xịn
+    "ig_mc_6503": 6503,          # MC 6503 Follow instagram - tây
+    "ig_mc_6504": 6504,          # MC 6504 Sv1 View story
+    "ig_mc_6273": 6273           # MC 6273 Cmt nhanh
+}
+SMM_API_URL = "https://seedingmarketing.net/api/v2"
+SMM_API_KEY = os.getenv("SMM_API_KEY")
+def call_smm_api(action, data=None):
+    if data is None:
+        data = {}
+    data["key"] = SMM_API_KEY
+    data["action"] = action
+    try:
+        response = requests.post(SMM_API_URL, data=data, timeout=15)
+        return response.json()
+    except Exception as e:
+        logging.error(f"Lỗi kết nối SMM API ({action}): {e}")
+        return None
 
 def load_users_db():
     if os.path.exists(DB_FILE):
@@ -420,7 +459,7 @@ SMS_PACKAGES = {
     }
 }
 
-# Khai báo các trạng thái Conversation (Thêm state cho khách phản hồi)
+# Khai báo các trạng thái Conversation
 (
     INPUT_LINK, INPUT_QUANTITY, INPUT_TOPUP_AMOUNT, INPUT_GITCODE, 
     INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE, 
@@ -964,11 +1003,66 @@ async def receive_quantity_handler(update: Update, context: ContextTypes.DEFAULT
     else:
         return await process_final_order(update, context, "Mặc định")
 
+async def background_order_status_checker(context: ContextTypes.DEFAULT_TYPE, order_id: int, admin_chat_id: int, admin_msg_id: int, user_id: int, user_name: str, package_name: str, link: str, quantity: int, total_price: float):
+    """Tiến trình kiểm tra trạng thái đơn hàng tự động 24/7 qua SMM API cứ mỗi 1 tiếng."""
+    while True:
+        await asyncio.sleep(3600)  # Đợi 1 tiếng kiểm tra lại
+        res = call_smm_api("status", {"order": order_id})
+        if res and isinstance(res, dict):
+            status = res.get("status", "").lower()
+            if status in ["completed", "hoàn thành"]:
+                new_admin_text = (
+                    f"🔔 <b>ĐƠN HÀNG TĂNG TƯƠNG TÁC ĐÃ HOÀN THÀNH!</b>\n"
+                    f"----------------------------------------\n"
+                    f"👤 Khách hàng: {user_name} (ID: <code>{user_id}</code>)\n"
+                    f"📦 Gói: {html.escape(str(package_name))}\n"
+                    f"🆔 SMM Order ID: <code>{order_id}</code>\n"
+                    f"🔗 Link: <code>{html.escape(str(link))}</code>\n"
+                    f"📊 Số lượng: {quantity:,}\n"
+                    f"💵 Tổng tiền: {total_price:,.0f}đ\n\n"
+                    f"✅ <b>STATUS: HOÀN THÀNH</b>"
+                )
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=admin_chat_id,
+                        message_id=admin_msg_id,
+                        text=new_admin_text,
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟢 ĐÃ HOÀN THÀNH", callback_data="none")]])
+                    )
+                except Exception:
+                    pass
+                break
+            elif status in ["canceled", "cancelled", "hủy"]:
+                new_admin_text = (
+                    f"🔔 <b>ĐƠN HÀNG TĂNG TƯƠNG TÁC ĐÃ BỊ HỦY!</b>\n"
+                    f"----------------------------------------\n"
+                    f"👤 Khách hàng: {user_name} (ID: <code>{user_id}</code>)\n"
+                    f"📦 Gói: {html.escape(str(package_name))}\n"
+                    f"🆔 SMM Order ID: <code>{order_id}</code>\n"
+                    f"🔗 Link: <code>{html.escape(str(link))}</code>\n"
+                    f"📊 Số lượng: {quantity:,}\n"
+                    f"💵 Tổng tiền: {total_price:,.0f}đ\n\n"
+                    f"❌ <b>STATUS: ĐÃ HỦY</b>"
+                )
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=admin_chat_id,
+                        message_id=admin_msg_id,
+                        text=new_admin_text,
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔴 ĐÃ HỦY", callback_data="none")]])
+                    )
+                except Exception:
+                    pass
+                break
+
 async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE, cmt_type="Mặc định"):
     user = update.effective_user
     selected_item = context.user_data.get("buying_service", {})
     link = context.user_data.get("order_link", "")
     quantity = context.user_data.get("order_quantity", 0)
+    item_id_str = selected_item.get("id")
     
     price_per_unit = selected_item.get("price", 0)
     total_price = quantity * price_per_unit
@@ -1000,15 +1094,35 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     new_bal = user_data["balance"]
 
+    # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN (CỐ ĐỊNH GÓI SỐ ĐO & CẢM XÚC NẾU CÓ) =================
+    smm_service_id = SMM_SERVICES_FIXED.get(item_id_str, 6245)  
+    
+    payload_data = {
+        "service": smm_service_id,
+        "link": link,
+        "quantity": quantity
+    }
+    
+    # Cố định luôn tuỳ chọn 3 cảm xúc cho các gói Like nhanh
+    if "like" in item_id_str:
+        payload_data["comments"] = "👍, ❤️, 😆"
+
+    smm_res = call_smm_api("add", payload_data)
+    
+    smm_order_id = "Không rõ"
+    if smm_res and isinstance(smm_res, dict) and "order" in smm_res:
+        smm_order_id = smm_res.get("order")
+
     success_text = (
         f"🎉 <b>ĐẶT HÀNG THÀNH CÔNG!</b>\n\n"
         f"📦 <b>Gói:</b> {html.escape(str(selected_item.get('name')))}\n"
         f"💬 <b>Loại:</b> {html.escape(str(cmt_type))}\n"
         f"🔗 <b>Link:</b> <code>{html.escape(str(link))}</code>\n"
         f"📊 <b>Số lượng:</b> <code>{quantity:,}</code>\n"
+        f"🆔 <b>Mã đơn hệ thống (ID):</b> <code>{smm_order_id}</code>\n"
         f"💵 <b>Thanh toán:</b> <code>{total_price:,.0f}đ</code>\n"
         f"💳 <b>Số dư còn lại:</b> <code>{new_bal:,.0f}đ</code>\n\n"
-        f"⏳ <i>Đơn hàng đã được tự động đưa vào hàng chờ xử lý.</i>"
+        f"⏳ <i>Đơn hàng đã được tự động đẩy lên hệ thống SMM thành công.</i>"
     )
     reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
 
@@ -1020,23 +1134,29 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_mention = get_user_mention(user)
 
     admin_notice = (
-        f"🔔 <b>ĐƠN HÀNG TĂNG TƯƠNG TÁC MỚI!</b>\n"
+        f"🔔 <b>ĐƠN HÀNG TĂNG TƯƠNG TÁC MỚI (TỰ ĐỘNG MUA)!</b>\n"
         f"----------------------------------------\n"
         f"👤 Khách hàng: {user_mention} (ID: <code>{user.id}</code>)\n"
         f"📦 Gói: {html.escape(str(selected_item.get('name')))}\n"
+        f"🆔 SMM Order ID: <code>{smm_order_id}</code>\n"
         f"💬 Loại cmt: {html.escape(str(cmt_type))}\n"
         f"🔗 Link: <code>{html.escape(str(link))}</code>\n"
         f"📊 Số lượng: {quantity:,}\n"
-        f"💵 Tổng tiền: {total_price:,.0f}đ"
+        f"💵 Tổng tiền: {total_price:,.0f}đ\n\n"
+        f"⏳ <b>STATUS: ĐÃ NHẬN ĐƠN ĐANG BUFF</b>"
     )
     
     admin_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Đã nhận đơn", callback_data=f"admin_accept_order:{user.id}")],
-        [InlineKeyboardButton("❌ Từ chối đơn", callback_data=f"admin_reject_order:{user.id}")]
+        [InlineKeyboardButton("🟢 ĐÃ NHẬN ĐƠN ĐANG BUFF", callback_data="none")]
     ])
     
     try:
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
+        sent_admin_msg = await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
+        if smm_order_id != "Không rõ":
+            asyncio.create_task(background_order_status_checker(
+                context, int(smm_order_id), int(ADMIN_CHAT_ID), sent_admin_msg.message_id, 
+                user.id, user_mention, selected_item.get('name'), link, quantity, total_price
+            ))
     except Exception:
         pass
 
@@ -1451,7 +1571,6 @@ async def receive_private_msg_text_handler(update: Update, context: ContextTypes
     media_type = context.user_data.get("private_media_type", "none")
     media_id = context.user_data.get("private_media_id")
 
-    # Thêm nút Phản hồi gắn kèm vào tin nhắn riêng gửi tới khách
     reply_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💬 Phản hồi Admin", callback_data="user_click_reply")]
     ])
@@ -1490,7 +1609,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_final_order(update, context, cmt_type)
         return
 
-    # ================= XỬ LÝ KHÁCH BẤM NÚT PHẢN HỒI =================
     elif data == "user_click_reply":
         text = (
             f"💬 <b>NHẬP NỘI DUNG PHẢN HỒI CHO ADMIN</b>\n"
@@ -1518,7 +1636,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await query_edit_or_replace_admin(update, context, text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         context.user_data["prompt_msg_id"] = msg.message_id
         return INPUT_PRIVATE_MSG_TEXT
-    # ==============================================================================
 
     elif data == "create_bot_tele_menu":
         text = (
@@ -2424,26 +2541,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    elif data.startswith("admin_accept_order:"):
-        new_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🟢 ĐÃ NHẬN ĐƠN", callback_data="none")]
-        ])
-        try:
-            current_text = query.message.text
-            await query.edit_message_text(text=current_text + "\n\n🟢 <b>STATUS: ĐÃ NHẬN ĐƠN</b>", parse_mode="HTML", reply_markup=new_keyboard)
-        except Exception:
-            pass
-
-    elif data.startswith("admin_reject_order:"):
-        new_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔴 ĐÃ TỪ CHỐI", callback_data="none")]
-        ])
-        try:
-            current_text = query.message.text
-            await query.edit_message_text(text=current_text + "\n\n🔴 <b>STATUS: ĐÃ TỪ CHỐI ĐƠN</b>", parse_mode="HTML", reply_markup=new_keyboard)
-        except Exception:
-            pass
-
     elif data == "products_p1":
         text, reply_markup = products_menu_keyboard(page=1)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=reply_markup)
@@ -2515,7 +2612,6 @@ def main():
             ],
             INPUT_PRIVATE_MSG_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_private_msg_text_handler)],
             INPUT_CREATE_BOT_REQUIREMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_bot_requirements_handler)],
-            # Thêm state nhận phản hồi từ khách
             INPUT_USER_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_feedback_handler)],
         },
         fallbacks=[
