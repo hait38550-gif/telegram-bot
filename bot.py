@@ -2580,18 +2580,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 def main():
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
-        print("⚠️ Vui lòng cấu hình BOT_TOKEN chính xác trước khi chạy bot!")
-        return
-
+    # Khởi động Keep-Alive Flask Server chạy ngầm trước khi bật Bot
     keep_alive()
+
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
+        logging.error("LỖI: Chưa cấu hình BOT_TOKEN chính xác!")
+        return
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(button_handler)
+            CallbackQueryHandler(button_handler),
+            CommandHandler("start", start)
         ],
         states={
             INPUT_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_link_handler)],
@@ -2601,31 +2602,24 @@ def main():
             INPUT_CREATE_CODE_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_custom_gitcode_handler)],
             INPUT_ADMIN_EDIT_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_admin_edit_user_handler)],
             INPUT_SMS_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sms_phone_handler)],
-            INPUT_BROADCAST_PHOTO: [
-                MessageHandler(filters.PHOTO | filters.VIDEO, receive_broadcast_media_handler),
-                CallbackQueryHandler(button_handler, pattern="^skip_broadcast_media$")
-            ],
+            INPUT_BROADCAST_PHOTO: [MessageHandler((filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, receive_broadcast_media_handler)],
             INPUT_BROADCAST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_broadcast_text_handler)],
             INPUT_PRIVATE_MSG_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_private_msg_user_id_handler)],
-            INPUT_PRIVATE_MSG_PHOTO: [
-                MessageHandler(filters.PHOTO | filters.VIDEO, receive_private_msg_media_handler),
-                CallbackQueryHandler(button_handler, pattern="^skip_private_media$")
-            ],
+            INPUT_PRIVATE_MSG_PHOTO: [MessageHandler((filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, receive_private_msg_media_handler)],
             INPUT_PRIVATE_MSG_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_private_msg_text_handler)],
             INPUT_CREATE_BOT_REQUIREMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_bot_requirements_handler)],
             INPUT_USER_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_feedback_handler)],
         },
-        fallbacks=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(button_handler)
-        ],
+        fallbacks=[CommandHandler("start", start)],
         per_message=False
     )
 
-    application.add_handler(CommandHandler("topup", admin_topup_cmd))
     application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("topup", admin_topup_cmd))
+    application.add_handler(CallbackQueryHandler(button_handler))
 
-    print("🤖 Bot đang chạy...")
+    logging.info("Bot đang khởi động và chạy thành công...")
     application.run_polling()
 
 if __name__ == "__main__":
