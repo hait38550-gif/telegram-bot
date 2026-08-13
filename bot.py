@@ -82,6 +82,7 @@ SMM_SERVICES_FIXED = {
 }
 SMM_API_URL = "https://seedingmarketing.net/api/v2"
 SMM_API_KEY = os.getenv("SMM_API_KEY")
+
 def call_smm_api(action, data=None):
     if data is None:
         data = {}
@@ -1064,11 +1065,8 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     quantity = context.user_data.get("order_quantity", 0)
     item_id_str = selected_item.get("id")
     
-    # Lấy giá của 1 đơn vị từ cấu hình gói dịch vụ đã chọn
-    price_per_unit = float(selected_item.get("price", 0))
-    
-    # 💡 SỬA LỖI TÍNH TIỀN: Lấy đơn giá nhân chính xác với số lượng khách nhập
-    total_price = float(quantity) * price_per_unit
+    price_per_unit = selected_item.get("price", 0)
+    total_price = quantity * price_per_unit
     
     user_data = get_user_data(user.id)
     if user_data["balance"] < total_price:
@@ -1085,7 +1083,6 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(msg_text, parse_mode="HTML", reply_markup=keyboard)
         return ConversationHandler.END
 
-    # Trừ tiền tài khoản người dùng sau khi đã tính toán chính xác
     user_data["balance"] -= total_price
     
     if cmt_type != "Mặc định":
@@ -1098,7 +1095,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     new_bal = user_data["balance"]
 
-    # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN =================
+    # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN (CỐ ĐỊNH GÓI SỐ ĐO & CẢM XÚC NẾU CÓ) =================
     smm_service_id = SMM_SERVICES_FIXED.get(item_id_str, 6245)  
     
     payload_data = {
@@ -1107,6 +1104,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         "quantity": quantity
     }
     
+    # Cố định luôn tuỳ chọn 3 cảm xúc cho các gói Like nhanh
     if "like" in item_id_str:
         payload_data["comments"] = "👍, ❤️, 😆"
 
