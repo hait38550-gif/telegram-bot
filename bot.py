@@ -1096,37 +1096,37 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_bal = user_data["balance"]
 
     # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN =================
-# 1. Lấy ID gói hàng khách đã chọn
-item_id_str = selected_item.get("id", "")
+    # 1. Lấy ID gói hàng khách đã chọn
+    item_id_str = selected_item.get("id", "")
 
-# 2. Lấy Service ID tương ứng từ dictionary
-smm_service_id = SMM_SERVICES_FIXED.get(item_id_str)
+    # 2. Lấy Service ID tương ứng từ dictionary
+    smm_service_id = SMM_SERVICES_FIXED.get(item_id_str)
 
-# 3. NẾU KHÔNG TÌM THẤY MÃ DỊCH VỤ -> BÁO LỖI VÀ DỪNG ĐƠN (Tránh mua nhầm gói Like 6683)
-if not smm_service_id:
-    logging.error(f"❌ KHÔNG TÌM THẤY SERVICE ID CHO KEY: '{item_id_str}'")
-    err_text = (
-        f"⚠️ <b>LỖI DỊCH VỤ!</b>\n\n"
-        f"Gói bạn chọn (Mã: <code>{item_id_str}</code>) chưa được gán Mã Service ID tương ứng trên SMM.\n"
-        f"Vui lòng liên hệ Admin để cập nhật!"
-    )
-    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
-    if update.callback_query:
-        await update.callback_query.edit_message_text(err_text, parse_mode="HTML", reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(err_text, parse_mode="HTML", reply_markup=reply_markup)
-    return ConversationHandler.END
+    # 3. NẾU KHÔNG TÌM THẤY MÃ DỊCH VỤ -> BÁO LỖI VÀ DỪNG ĐƠN (Tránh mua nhầm gói Like 6683)
+    if not smm_service_id:
+        logging.error(f"❌ KHÔNG TÌM THẤY SERVICE ID CHO KEY: '{item_id_str}'")
+        err_text = (
+            f"⚠️ <b>LỖI DỊCH VỤ!</b>\n\n"
+            f"Gói bạn chọn (Mã: <code>{item_id_str}</code>) chưa được gán Mã Service ID tương ứng trên SMM.\n"
+            f"Vui lòng liên hệ Admin để cập nhật!"
+        )
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+        if update.callback_query:
+            await update.callback_query.edit_message_text(err_text, parse_mode="HTML", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(err_text, parse_mode="HTML", reply_markup=reply_markup)
+        return ConversationHandler.END
 
-# 4. Tạo dữ liệu gửi SMM API
-payload_data = {
-    "service": smm_service_id,
-    "link": link,
-    "quantity": quantity
-}
+    # 4. Tạo dữ liệu gửi SMM API
+    payload_data = {
+        "service": smm_service_id,
+        "link": link,
+        "quantity": quantity
+    }
 
-# 5. CHỈ chèn cảm xúc nếu chính xác là gói FB Like Tây
-if item_id_str == "like_s2_clone":
-    payload_data["comments"] = "👍, ❤️, 😆"
+    # 5. CHỈ chèn cảm xúc nếu chính xác là gói FB Like Tây
+    if item_id_str == "like_s2_clone":
+        payload_data["comments"] = "👍, ❤️, 😆"
 
     smm_res = call_smm_api("add", payload_data)
     
