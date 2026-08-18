@@ -58,7 +58,7 @@ SMS_DB_FILE = "sms_db.json"
 
 # ==================== CẤU HÌNH SMM API ====================
 SMM_SERVICES_FIXED = {
-    "like_s2_clone": 6245,       # MC 6245 S2 Like clone nhanh
+    "like_s2_clone": 6683,       # MC 6683 Facebook like tây - Cực nhanh (1p /1k)
     "fol_clone_tay": 6444,       # MC 6444 Follow Tây + page nhanh
     "cmt_s2_sale": 6452,         # S2 Cmt Sale
     "page_s7_clone": 6450,       # MC 6450 S7 Like page + follow clone
@@ -1096,7 +1096,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_bal = user_data["balance"]
 
     # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN (CỐ ĐỊNH GÓI SỐ ĐO & CẢM XÚC NẾU CÓ) =================
-    smm_service_id = SMM_SERVICES_FIXED.get(item_id_str, 6245)  
+    smm_service_id = SMM_SERVICES_FIXED.get(item_id_str, 6683)  
     
     payload_data = {
         "service": smm_service_id,
