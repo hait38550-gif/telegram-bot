@@ -1096,19 +1096,25 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_bal = user_data["balance"]
 
     # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN =================
-    # 1. Lấy ID gói hàng khách đã chọn
-    item_id_str = selected_item.get("id", "")
+    # 1. Quét tìm chính xác ID gói hàng (bất kể menu dùng key 'id', 'item_id' hay 'service_id')
+    item_id_str = (
+        selected_item.get("id") 
+        or selected_item.get("item_id") 
+        or selected_item.get("service_id") 
+        or ""
+    )
 
     # 2. Lấy Service ID tương ứng từ dictionary
     smm_service_id = SMM_SERVICES_FIXED.get(item_id_str)
 
-    # 3. NẾU KHÔNG TÌM THẤY MÃ DỊCH VỤ -> BÁO LỖI VÀ DỪNG ĐƠN (Tránh mua nhầm gói Like 6683)
+    # 3. NẾU KHÔNG TÌM THẤY MÃ DỊCH VỤ -> BÁO LỖI HIỂN THỊ RÕ KEY ĐỂ FIX
     if not smm_service_id:
         logging.error(f"❌ KHÔNG TÌM THẤY SERVICE ID CHO KEY: '{item_id_str}'")
         err_text = (
-            f"⚠️ <b>LỖI DỊCH VỤ!</b>\n\n"
-            f"Gói bạn chọn (Mã: <code>{item_id_str}</code>) chưa được gán Mã Service ID tương ứng trên SMM.\n"
-            f"Vui lòng liên hệ Admin để cập nhật!"
+            f"⚠️ <b>LỖI KHÔNG TÌM THẤY MÃ GÓI SMM!</b>\n\n"
+            f"• Gói chọn: <b>{html.escape(str(selected_item.get('name')))}</b>\n"
+            f"• Mã ID nhận được: <code>{item_id_str if item_id_str else 'Rỗng (None)'}</code>\n\n"
+            f"👉 <i>Vui lòng thêm mã <code>\"{item_id_str}\"</code> vào bảng SMM_SERVICES_FIXED!</i>"
         )
         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
         if update.callback_query:
