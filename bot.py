@@ -42,9 +42,9 @@ logging.basicConfig(
 )
 logging.getLogger("httpx").setLevel(logging.INFO)
 
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@TienDat_Mmo")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "6900793565")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8505351737:AAHkzsR00sUxaRJL7UR-_iAXVT-OoUvfCQk")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "YourAdminUsername")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_ADMIN_CHAT_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
 BANK_INFO = {
     "bank_name": "MBBank",
@@ -58,30 +58,94 @@ SMS_DB_FILE = "sms_db.json"
 
 # ==================== CẤU HÌNH SMM API ====================
 SMM_SERVICES_FIXED = {
-    "like_s2_clone": 6683,       # Facebook like tây - Cực nhanh (1p /1k)
-    "fol_clone_tay": 6444,       # MC 6444 Follow Tây + page nhanh
-    "cmt_s2_sale": 6452,         # S2 Cmt Sale
-    "page_s7_clone": 6450,       # MC 6450 S7 Like page + follow clone
-    "group_mem_s3": 6267,        # MC 6267 S3 Mem group
-    "share_article": 6301,       # MC 6301 Share bài viết
-    "view_video_reels": 6453,    # MC 6453 Facebook view - Video/Reels
-    "mat_live_sv2": 6292,        # MC 6292 Sv2 mắt sale
-    "story_s32_tay": 6483,       # MC 6483 S32 - view story - tây clone
-    "tt_like_s6": 6484,          # MC 6484 S6 Like tiktok Tây Nhanh
-    "tt_fol_quality": 6641,      # MC 6641 Theo dõi TikTok chất lượng
-    "tt_view_s6": 6491,          # MC 6491 S6 View Tiktok
-    "tt_cmt_s6": 6317,           # MC 6317 S6 cmt tiktok Việt High
-    "tt_share_s2": 6495,         # MC 6495 S2 Share video tiktok giá rẻ
-    "yt_mc_6505": 6505,          # MC 6505 YouTube Subscribers
-    "yt_mc_6508": 6508,          # MC 6508 Like rẻ nhanh
-    "yt_mc_6510": 6510,          # MC 6510 S1 Mắt Live YTB
-    "ig_mc_6274": 6274,          # MC 6274 Like Instagram Việt xịn
-    "ig_mc_6503": 6503,          # MC 6503 Follow instagram - tây
-    "ig_mc_6504": 6504,          # MC 6504 Sv1 View story
-    "ig_mc_6273": 6273           # MC 6273 Cmt nhanh
+    # --- FACEBOOK ---
+    "fb_mc_6683_1": 6683,
+    "fb_mc_6683_2": 6683,
+    "fb_mc_6683_3": 6683,
+    "fb_mc_6683_4": 6683,
+    "fb_mc_6444_1": 6444,
+    "fb_mc_6444_2": 6444,
+    "fb_mc_6444_3": 6444,
+    "cmt_s2_sale": 6452,
+    "cmt_s1_sale": 6452,
+    "fb_mc_6448_1": 6448,
+    "fb_mc_6448_2": 6448,
+    "fb_mc_6451_1": 6451,
+    "fb_mc_6451_2": 6451,
+    "fb_mc_6301_1": 6301,
+    "fb_mc_6301_2": 6301,
+    "fb_mc_6473_1": 6473,
+    "fb_mc_6473_2": 6473,
+    "fb_mc_6483_1": 6483,
+    # --- TIKTOK ---
+    "tt_mc_6486_1": 6486,
+    "tt_mc_6486_2": 6486,
+    "tt_mc_6486_3": 6486,
+    "tt_mc_6486_4": 6486,
+    "tt_mc_6486_5": 6486,
+    "tt_mc_6486_6": 6486,
+    "tt_mc_6486_7": 6486,
+    "tt_mc_6641_1": 6641,
+    "tt_mc_6641_2": 6641,
+    "tt_mc_6641_3": 6641,
+    "tt_mc_6641_4": 6641,
+    "tt_mc_6641_5": 6641,
+    "tt_mc_6641_6": 6641,
+    "tt_mc_6492_1": 6492,
+    "tt_mc_6492_2": 6492,
+    "tt_mc_6492_3": 6492,
+    "tt_mc_6492_4": 6492,
+    "tt_mc_6492_5": 6492,
+    "tt_mc_6317_1": 6317,
+    "tt_mc_6317_2": 6317,
+    "tt_mc_6317_3": 6317,
+    "tt_mc_6495_1": 6495,
+    "tt_mc_6495_2": 6495,
+    "tt_mc_6495_3": 6495,
+    "tt_mc_6495_4": 6495,
+    "tt_mc_6496_1": 6496,
+    "tt_mc_6496_2": 6496,
+    "tt_mc_6688_1": 6688,
+    "tt_mc_6688_2": 6688,
+    "tt_mc_6688_3": 6688,
+    "tt_mc_6688_4": 6688,
+    "tt_mc_6688_5": 6688,
+    "tt_mc_6688_6": 6688,
+    # --- YOUTUBE ---
+    "yt_mc_6505_1": 6505,
+    "yt_mc_6505_2": 6505,
+    "yt_mc_6505_3": 6505,
+    "yt_mc_6508_1": 6508,
+    "yt_mc_6508_2": 6508,
+    "yt_mc_6510": 6510,
+    # --- INSTAGRAM ---
+    "ig_mc_6501_1": 6501,
+    "ig_mc_6501_2": 6501,
+    "ig_mc_6501_3": 6501,
+    "ig_mc_6503_1": 6503,
+    "ig_mc_6503_2": 6503,
+    "ig_mc_6503_3": 6503,
+    "ig_mc_6503_4": 6503,
+    "ig_mc_6503_5": 6503,
 }
+
+def get_smm_service_id(item_id):
+    if item_id in SMM_SERVICES_FIXED:
+        return SMM_SERVICES_FIXED[item_id]
+
+    try:
+        parts = item_id.split("_")
+        for part in parts:
+            if part.isdigit() and len(part) >= 4:
+                return int(part)
+    except Exception:
+        pass
+
+    return None
+
 SMM_API_URL = "https://seedingmarketing.net/api/v2"
 SMM_API_KEY = os.getenv("SMM_API_KEY")
+
 def call_smm_api(action, data=None):
     if data is None:
         data = {}
@@ -241,18 +305,18 @@ SERVICES = {
     "fb_like": {
         "title": "👍 TĂNG LIKE BÀI VIẾT",
         "items": [
-            {"id": "like_s1_clone", "name": "✨ S1 Like clone xịn", "price": 99.0},
-            {"id": "like_s1_tay", "name": "👆 S1 Like bấm tay", "price": 130.4},
-            {"id": "like_s2_duphong", "name": "🛡️ S2 Like post dự phòng", "price": 110.35},
-            {"id": "like_s2_clone", "name": "⚡ S2 Like clone nhanh", "price": 90.0},
+            {"id": "fb_mc_6683_1", "name": "✨ S1 Like clone xịn", "price": 99.0},
+            {"id": "fb_mc_6683_2", "name": "👆 S1 Like bấm tay", "price": 130.4},
+            {"id": "fb_mc_6683_3", "name": "🛡️ S2 Like post dự phòng", "price": 110.35},
+            {"id": "fb_mc_6683_4", "name": "⚡ S2 Like clone nhanh", "price": 90.0},
         ]
     },
     "fb_follow": {
         "title": "👤 TĂNG FOLLOW / SUB",
         "items": [
-            {"id": "fol_s8_clone", "name": "👑 S8 Follow Clone + Vip", "price": 69.72},
-            {"id": "fol_clone_tay", "name": "✋ Follow clone TAY", "price": 73.43},
-            {"id": "fol_clone_vn", "name": "🇻🇳 Follow clone Việt", "price": 86.0},
+            {"id": "fb_mc_6444_1", "name": "👑 S8 Follow Clone + Vip", "price": 69.72},
+            {"id": "fb_mc_6444_2", "name": "✋ Follow clone TAY", "price": 73.43},
+            {"id": "fb_mc_6444_3", "name": "🇻🇳 Follow clone Việt", "price": 86.0},
         ]
     },
     "fb_cmt": {
@@ -265,175 +329,142 @@ SERVICES = {
     "fb_page": {
         "title": "⭐ TĂNG LIKE & FOLLOW PAGE",
         "items": [
-            {"id": "page_s2_tay", "name": "✍️ S2 Like page + follow TAY", "price": 70.3},
-            {"id": "page_real_tay", "name": "🌟 Like + Follow Page Bấm Tay", "price": 99.0},
+            {"id": "fb_mc_6448_1", "name": "✍️ S2 Like page + follow TAY", "price": 70.3},
+            {"id": "fb_mc_6448_2", "name": "🌟 Like + Follow Page Bấm Tay", "price": 99.0},
         ]
     },
     "fb_group": {
         "title": "👥 TĂNG THÀNH VIÊN NHÓM (GROUP)",
         "items": [
-            {"id": "group_mem_s1", "name": "💎 S1 Member Group Chất Lượng", "price": 120.0},
-            {"id": "group_mem_tay", "name": "🛡️ Member Group Bấm Tay Uy Tín", "price": 180.0},
+            {"id": "fb_mc_6451_1", "name": "💎 S1 Member Group Chất Lượng", "price": 120.0},
+            {"id": "fb_mc_6451_2", "name": "🛡️ Member Group Bấm Tay Uy Tín", "price": 180.0},
         ]
     },
     "fb_share": {
-        "title": "🔄 TĂNG SHARE & MEM GROUP",
+        "title": "🔄 TĂNG SHARE",
         "items": [
-            {"id": "share_s68", "name": "🌐 S68 Share Profile/Page/Group", "price": 83.62},
-            {"id": "share_s69_ao", "name": "👻 S69 Share ảo All Link", "price": 102.06},
+            {"id": "fb_mc_6301_1", "name": "🌐 S68 Share Profile/Page/Group", "price": 83.62},
+            {"id": "fb_mc_6301_2", "name": "👻 S69 Share ảo All Link", "price": 102.06},
         ]
     },
     "fb_view": {
-        "title": "👁️ TĂNG VIEW & MẮT LIVE",
+        "title": "👁️ TĂNG MẮT LIVE",
         "items": [
-            {"id": "view_reel_dq", "name": "🎬 View reel độc quyền", "price": 61.2},
-            {"id": "view_fb_3s", "name": "⏱️ View facebook 3s chạy Reel", "price": 106.8},
+            {"id": "fb_mc_6473_1", "name": "🎬 View reel độc quyền", "price": 61.2},
+            {"id": "fb_mc_6473_2", "name": "⏱️ View facebook 3s chạy Reel", "price": 106.8},
         ]
     },
     "fb_story": {
         "title": "👁️ TĂNG VIEW STORY",
         "items": [
-            {"id": "story_view_s1", "name": "📱 S1 View Story Facebook", "price": 50.0},
+            {"id": "fb_mc_6483_1", "name": "📱 S1 View Story Facebook", "price": 50.0},
         ]
     },
     "tt_like": {
         "title": "🎵 TIKTOK - TĂNG TIM (LIKE)",
         "items": [
-            {"id": "tt_like_s6", "name": "⚡ S6 Like tiktok Tây Nhanh", "price": 25.51},
-            {"id": "tt_like_s7", "name": "🌍 S7 Like Tiktok tây- Không BH", "price": 25.98},
-            {"id": "tt_like_s5", "name": "🛡️ S5 Like tiktok Tây Nhanh | BH 30 ngày", "price": 39.32},
-            {"id": "tt_like_s9", "name": "👁️ S9 TikTok- ( Like ) tây + VIEW", "price": 26.34},
-            {"id": "tt_like_s4", "name": "🇻🇳 S4 like tiktok việt", "price": 30.79},
-            {"id": "tt_like_s2", "name": "🔥 S2 Like tiktok việt high", "price": 39.5},
-            {"id": "tt_like_re", "name": "💸 Like TikTok việt giá rẻ", "price": 28.45},
+            {"id": "tt_mc_6486_1", "name": "⚡ S6 Like tiktok Tây Nhanh", "price": 25.51},
+            {"id": "tt_mc_6486_2", "name": "🌍 S7 Like Tiktok tây- Không BH", "price": 25.98},
+            {"id": "tt_mc_6486_3", "name": "🛡️ S5 Like tiktok Tây Nhanh | BH 30 ngày", "price": 39.32},
+            {"id": "tt_mc_6486_4", "name": "👁️ S9 TikTok- ( Like ) tây + VIEW", "price": 26.34},
+            {"id": "tt_mc_6486_5", "name": "🇻🇳 S4 like tiktok việt", "price": 30.79},
+            {"id": "tt_mc_6486_6", "name": "🔥 S2 Like tiktok việt high", "price": 39.5},
+            {"id": "tt_mc_6486_7", "name": "💸 Like TikTok việt giá rẻ", "price": 28.45},
         ]
     },
     "tt_follow": {
         "title": "👤 TIKTOK - TĂNG THEO DÕI",
         "items": [
-            {"id": "tt_fol_clone", "name": "🤖 Tiktok Follow clone (19-6)", "price": 87.03},
-            {"id": "tt_fol_s4", "name": "🇻🇳 S4 Follow TikTok Việt", "price": 59.0},
-            {"id": "tt_fol_s5", "name": "✨ S5 Follow TikTok sale new", "price": 51.2},
-            {"id": "tt_fol_s6", "name": "📈 S6 Follow tiktok việt ổn định", "price": 47.3},
-            {"id": "tt_fol_high", "name": "🚀 Follow TikTok Việt High", "price": 75.9},
-            {"id": "tt_fol_s2_high", "name": "⭐ S2 Follow TikTok Việt High", "price": 109.7},
+            {"id": "tt_mc_6641_1", "name": "🤖 Tiktok Follow clone (19-6)", "price": 87.03},
+            {"id": "tt_mc_6641_2", "name": "🇻🇳 S4 Follow TikTok Việt", "price": 59.0},
+            {"id": "tt_mc_6641_3", "name": "✨ S5 Follow TikTok sale new", "price": 51.2},
+            {"id": "tt_mc_6641_4", "name": "📈 S6 Follow tiktok việt ổn định", "price": 47.3},
+            {"id": "tt_mc_6641_5", "name": "🚀 Follow TikTok Việt High", "price": 75.9},
+            {"id": "tt_mc_6641_6", "name": "⭐ S2 Follow TikTok Việt High", "price": 109.7},
         ]
     },
     "tt_view": {
         "title": "👁️ TIKTOK - TĂNG LƯỢT XEM (VIEW)",
         "items": [
-            {"id": "tt_view_s64", "name": "📊 S64 View Tiktok | KBH | min:100", "price": 22.15},
-            {"id": "tt_view_s11", "name": "📉 S11 View Tiktok | KBH | min:100 | Không BH", "price": 21.0},
-            {"id": "tt_view_s6", "name": "📌 S6 View Tiktok | KBH | min:100 | Không BH", "price": 22.18},
-            {"id": "tt_view_st", "name": "🚀 View tiktok siêu tốc | KBH | dự phòng", "price": 22.15},
-            {"id": "tt_view_s3", "name": "💎 S3 view tiktok sale | Không tụt", "price": 1645.0},
+            {"id": "tt_mc_6492_1", "name": "📊 S64 View Tiktok | KBH | min:100", "price": 22.15},
+            {"id": "tt_mc_6492_2", "name": "📉 S11 View Tiktok | KBH | min:100 | Không BH", "price": 21.0},
+            {"id": "tt_mc_6492_3", "name": "📌 S6 View Tiktok | KBH | min:100 | Không BH", "price": 22.18},
+            {"id": "tt_mc_6492_4", "name": "🚀 View tiktok siêu tốc | KBH | dự phòng", "price": 22.15},
+            {"id": "tt_mc_6492_5", "name": "💎 S3 view tiktok sale | Không tụt", "price": 1645.0},
         ]
     },
     "tt_cmt": {
         "title": "💬 TIKTOK - TĂNG BÌNH LUẬN",
         "items": [
-            {"id": "tt_cmt_s4", "name": "⚡ S4 Cmt Tiktok Việt nhanh", "price": 215.0},
-            {"id": "tt_cmt_s6", "name": "🛡️ S6 cmt tiktok Việt High ổn định", "price": 169.5},
-            {"id": "tt_cmt_s7", "name": "✨ S7 cmt tiktok Việt New", "price": 163.0},
+            {"id": "tt_mc_6317_1", "name": "⚡ S4 Cmt Tiktok Việt nhanh", "price": 215.0},
+            {"id": "tt_mc_6317_2", "name": "🛡️ S6 cmt tiktok Việt High ổn định", "price": 169.5},
+            {"id": "tt_mc_6317_3", "name": "✨ S7 cmt tiktok Việt New", "price": 163.0},
         ]
     },
     "tt_share": {
         "title": "🔄 TIKTOK - TĂNG SHARE",
         "items": [
-            {"id": "tt_share_s2_sale", "name": "🏷️ S2 Share video tiktok Sale", "price": 13020.0},
-            {"id": "tt_share_live", "name": "🔴 Share tiktok live Việt Nam", "price": 38.85},
-            {"id": "tt_share_video", "name": "🇻🇳 Share video tiktok Việt Nam", "price": 35.6},
-            {"id": "tt_share_s2_cheap", "name": "💸 S2 Share video tiktok giá rẻ | KBH", "price": 24.9},
+            {"id": "tt_mc_6495_1", "name": "🏷️ S2 Share video tiktok Sale", "price": 13020.0},
+            {"id": "tt_mc_6495_2", "name": "🔴 Share tiktok live Việt Nam", "price": 38.85},
+            {"id": "tt_mc_6495_3", "name": "🇻🇳 Share video tiktok Việt Nam", "price": 35.6},
+            {"id": "tt_mc_6495_4", "name": "💸 S2 Share video tiktok giá rẻ | KBH", "price": 24.9},
         ]
     },
     "tt_save": {
         "title": "💾 TIKTOK - TĂNG SAVE (LƯU VIDEO)",
         "items": [
-            {"id": "tt_save_s2", "name": "⚡ S2 save video Việt nhanh", "price": 31.05},
-            {"id": "tt_save_s3", "name": "🌍 S3 save video [Tài nguyên Tây] | KBH", "price": 21.39},
+            {"id": "tt_mc_6496_1", "name": "⚡ S2 save video Việt nhanh", "price": 31.05},
+            {"id": "tt_mc_6496_2", "name": "🌍 S3 save video [Tài nguyên Tây] | KBH", "price": 21.39},
         ]
     },
     "tt_live_vn": {
         "title": "🔴 TIKTOK - LIVE VIỆT NAM",
         "items": [
-            {"id": "live_vn_30p", "name": "⏱️ Live Tiktok việt - 30 phút (New - Nên dùng)", "price": 234.89},
-            {"id": "live_vn_60p", "name": "⏱️ Live Tiktok việt - 60 phút (New - Nên dùng)", "price": 377.36},
-            {"id": "live_vn_90p", "name": "⏱️ Live Tiktok việt - 90 phút (New - Nên dùng)", "price": 556.04},
-            {"id": "live_vn_120p", "name": "⏱️ Live Tiktok việt - 120 phút (New - Nên dùng)", "price": 734.71},
-            {"id": "live_vn_180p", "name": "⏱️ Live Tiktok việt - 180 phút (New - Nên dùng)", "price": 1092.07},
-            {"id": "live_vn_360p", "name": "⏱️ Live Tiktok việt - 360 phút (New - Nên dùng)", "price": 1449.43},
-        ]
-    },
-    "tt_mat_live": {
-        "title": "👀 TIKTOK - MẮT LIVESTREAM",
-        "items": [
-            {"id": "mat_live_30p", "name": "🛡️ Mắt live 30 phút (Ổn định)", "price": 92.15},
-            {"id": "mat_live_60p", "name": "⭐ Mắt live 60 phút (Nên dùng)", "price": 138.95},
-            {"id": "mat_live_90p", "name": "⭐ Mắt live 90 phút (Nên dùng)", "price": 196.15},
-            {"id": "mat_live_120p", "name": "⭐ Mắt live 120 phút (Nên dùng)", "price": 280.0},
-            {"id": "mat_live_180p", "name": "⭐ Mắt live 180 phút (Nên dùng)", "price": 412.6},
-        ]
-    },
-    "tt_mat_tay": {
-        "title": "🌍 TIKTOK - MẮT LIVE TÂY",
-        "items": [
-            {"id": "mat_tay_30p", "name": "⚡ Mắt live Tiktok Tây | Gói 30p (Nhanh)", "price": 150.0},
-            {"id": "mat_tay_60p", "name": "⚡ Mắt live Tiktok Tây | Gói 60p (Nhanh)", "price": 277.4},
-            {"id": "mat_tay_90p", "name": "⚡ Mắt live Tiktok Tây | Gói 90p (Nhanh)", "price": 403.5},
-            {"id": "mat_tay_120p", "name": "⚡ Mắt live Tiktok Tây | Gói 120p (Nhanh)", "price": 520.5},
-            {"id": "mat_tay_180p", "name": "⚡ Mắt live Tiktok Tây | Gói 180p (Nhanh)", "price": 754.5},
-            {"id": "mat_tay_240p", "name": "⚡ Mắt live Tiktok Tây | Gói 240p (Nhanh)", "price": 988.5},
-            {"id": "mat_tay_270p", "name": "⚡ Mắt live Tiktok Tây | Gói 270p (Nhanh)", "price": 1092.5},
-        ]
-    },
-    "tt_vip_mat": {
-        "title": "👑 TIKTOK - VIP MẮT LIVE STREAM",
-        "items": [
-            {"id": "vip_mat_15p", "name": "⭐ Vip mắt Tiktok 15 phút", "price": 254.0},
-            {"id": "vip_mat_30p", "name": "⭐ Vip mắt Tiktok 30 phút", "price": 481.5},
-            {"id": "vip_mat_60p", "name": "⭐ Vip mắt Tiktok 60 phút", "price": 748.0},
-            {"id": "vip_mat_90p", "name": "⭐ Vip mắt Tiktok 90 phút", "price": 956.0},
-            {"id": "vip_mat_120p", "name": "⭐ Vip mắt Tiktok 120 phút", "price": 1151.0},
-            {"id": "vip_live", "name": "❤️ Tim Live stream (Nên dùng tăng mắt)", "price": 20.5},
+            {"id": "tt_mc_6688_1", "name": "⏱️ Live Tiktok việt - 30 phút (New - Nên dùng)", "price": 1234.89},
+            {"id": "tt_mc_6688_2", "name": "⏱️ Live Tiktok việt - 60 phút (New - Nên dùng)", "price": 1377.36},
+            {"id": "tt_mc_6688_3", "name": "⏱️ Live Tiktok việt - 90 phút (New - Nên dùng)", "price": 1556.04},
+            {"id": "tt_mc_6688_4", "name": "⏱️ Live Tiktok việt - 120 phút (New - Nên dùng)", "price": 1734.71},
+            {"id": "tt_mc_6688_5", "name": "⏱️ Live Tiktok việt - 180 phút (New - Nên dùng)", "price": 1592.07},
+            {"id": "tt_mc_6688_6", "name": "⏱️ Live Tiktok việt - 360 phút (New - Nên dùng)", "price": 1549.43},
         ]
     },
     "yt_sub": {
         "title": "▶️ YOUTUBE - TĂNG ĐĂNG KÝ KÊNH",
         "items": [
-            {"id": "yt_mc_6505", "name": "MC 6505 LÊN CỰC NHANH - Tuột 100% -YouTube Subscribers | Không bảo hành", "price": 190.14},
-            {"id": "yt_mc_6506", "name": "MC 6506 S23 - Sub youtube - new - Tài khoản cực trâu - Kênh bắt buộc có video trên 2 phút", "price": 948.09},
-            {"id": "yt_mc_6661", "name": "MC 6661 Youtube sub Max 1k Lên nhanh", "price": 870.3},
+            {"id": "yt_mc_6505_1", "name": "LÊN CỰC NHANH - Tuột 100% -YouTube Subscribers | Không bảo hành", "price": 590.14},
+            {"id": "yt_mc_6505_2", "name": "S23 - Sub youtube - new - Tài khoản cực trâu - Kênh bắt buộc có video trên 2 phút", "price": 1048.09},
+            {"id": "yt_mc_6505_3", "name": "Youtube sub Max 1k Lên nhanh", "price": 870.3},
         ]
     },
     "yt_like": {
         "title": "👍 YOUTUBE - TĂNG LIKE",
         "items": [
-            {"id": "yt_mc_6508", "name": "MC 6508 Like rẻ nhanh | 20k/Day | Không bảo hành", "price": 29.42},
-            {"id": "yt_mc_6509", "name": "MC 6509 S4 like nhanh chất lượng cao | Không bảo hành", "price": 30.58},
+            {"id": "yt_mc_6508_1", "name": "Like rẻ nhanh | 20k/Day | Không bảo hành", "price": 90.42},
+            {"id": "yt_mc_6508_2", "name": "S4 like nhanh chất lượng cao | Không bảo hành", "price": 105.58},
         ]
     },
     "yt_view": {
         "title": "👁️ YOUTUBE - TĂNG VIEW & LIVESTREAM",
         "items": [
-            {"id": "yt_mc_6510", "name": "MC 6510 S1 Mắt Live YTB", "price": 22.2},
+            {"id": "yt_mc_6510", "name": "S1 Mắt Live YTB", "price": 50.2},
         ]
     },
     "ig_like": {
         "title": "❤️ INSTAGRAM - TĂNG LIKE",
         "items": [
-            {"id": "ig_mc_6274", "name": "MC 6274 Like Instagram Việt xịn", "price": 31.5},
-            {"id": "ig_mc_6500", "name": "MC 6500 S6 Like tây | Không bảo hành", "price": 23.93},
-            {"id": "ig_mc_6501", "name": "MC 6501 S7 Like tây | Bảo hành 7 ngày", "price": 22.59},
+            {"id": "ig_mc_6501_1", "name": "Like Instagram Việt xịn", "price": 70.5},
+            {"id": "ig_mc_6501_2", "name": "S6 Like tây | Không bảo hành", "price": 100.93},
+            {"id": "ig_mc_6501_3", "name": "S7 Like tây | Bảo hành 7 ngày", "price": 130.59},
         ]
     },
     "ig_follow": {
         "title": "👤 INSTAGRAM - TĂNG THEO DÕI",
         "items": [
-            {"id": "ig_mc_6270", "name": "MC 6270 S1 Follower instagram Việt", "price": 54.5},
-            {"id": "ig_mc_6271", "name": "MC 6271 Sv2 Follow việt giá rẻ", "price": 37.25},
-            {"id": "ig_mc_6276", "name": "MC 6276 S5 follow Instagram Việt high", "price": 107.71},
-            {"id": "ig_mc_6502", "name": "MC 6502 S2 Follower tây nhanh | Không bảo hành", "price": 46.49},
-            {"id": "ig_mc_6503", "name": "MC 6503 Follow instagram - tây | Bảo hành 7 ngày", "price": 48.69},
+            {"id": "ig_mc_6503_1", "name": "S1 Follower instagram Việt", "price": 47.5},
+            {"id": "ig_mc_6503_2", "name": "Sv2 Follow việt giá rẻ", "price": 57.25},
+            {"id": "ig_mc_6503_3", "name": "S5 follow Instagram Việt high", "price": 107.71},
+            {"id": "ig_mc_6503_4", "name": "S2 Follower tây nhanh | Không bảo hành", "price": 56.49},
+            {"id": "ig_mc_6503_5", "name": "Follow instagram - tây | Bảo hành 7 ngày", "price": 70.69},
         ]
     }
 }
