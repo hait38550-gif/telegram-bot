@@ -62,7 +62,7 @@ SMM_SERVICES_FIXED = {
     "fol_clone_tay": 6444,       # MC 6444 Follow Tây + page nhanh
     "cmt_s2_sale": 6452,         # S2 Cmt Sale
     "page_s7_clone": 6450,       # MC 6450 S7 Like page + follow clone
-    "group_mem_s3": 6267,        # MC 6267 S3 Mem group
+    "group_mem_s3": 6451,        # MC 6451 S2 mem clone | Không bảo hành | max 40k | tốc độ cực nhanh
     "share_article": 6301,       # MC 6301 Share bài viết
     "view_video_reels": 6453,    # MC 6453 Facebook view - Video/Reels
     "mat_live_sv2": 6292,        # MC 6292 Sv2 mắt sale
