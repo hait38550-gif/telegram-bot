@@ -59,10 +59,10 @@ SMS_DB_FILE = "sms_db.json"
 # ==================== CẤU HÌNH SMM API ====================
 SMM_SERVICES_FIXED = {
     # --- FACEBOOK ---
-    "fb_mc_6581_1": 6581,
-    "fb_mc_6581_2": 6581,
-    "fb_mc_6581_3": 6581,
-    "fb_mc_6581_4": 6581,
+    "fb_mc_6683_1": 6683,
+    "fb_mc_6683_2": 6683,
+    "fb_mc_6683_3": 6683,
+    "fb_mc_6683_4": 6683,
     "fb_mc_6444_1": 6444,
     "fb_mc_6444_2": 6444,
     "fb_mc_6444_3": 6444,
@@ -305,10 +305,10 @@ SERVICES = {
     "fb_like": {
         "title": "👍 TĂNG LIKE BÀI VIẾT",
         "items": [
-            {"id": "fb_mc_6581_1", "name": "✨ S1 Like clone xịn", "price": 99.0},
-            {"id": "fb_mc_6581_2", "name": "👆 S1 Like bấm tay", "price": 130.4},
-            {"id": "fb_mc_6581_3", "name": "🛡️ S2 Like post dự phòng", "price": 110.35},
-            {"id": "fb_mc_6581_4", "name": "⚡ S2 Like clone nhanh", "price": 90.0},
+            {"id": "fb_mc_6683_1", "name": "✨ S1 Like clone xịn", "price": 99.0},
+            {"id": "fb_mc_6683_2", "name": "👆 S1 Like bấm tay", "price": 130.4},
+            {"id": "fb_mc_6683_3", "name": "🛡️ S2 Like post dự phòng", "price": 110.35},
+            {"id": "fb_mc_6683_4", "name": "⚡ S2 Like clone nhanh", "price": 90.0},
         ]
     },
     "fb_follow": {
