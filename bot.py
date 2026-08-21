@@ -48,7 +48,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
 BANK_INFO = {
     "bank_name": "MBBank",
-    "account_no": "5054999999999",
+    "account_no": "3030777777",
     "account_name": "NGUYEN TIEN DAT"
 }
 
