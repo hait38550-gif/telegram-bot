@@ -74,9 +74,10 @@ SMM_SERVICES_FIXED = {
     "fb_mc_6451_2": 6451,
     "fb_mc_6301_1": 6301,
     "fb_mc_6301_2": 6301,
-    "fb_mc_6473_1": 6473,
-    "fb_mc_6473_2": 6473,
+    "fb_mc_6597_1": 6597,
+    "fb_mc_6597_2": 6597,
     "fb_mc_6483_1": 6483,
+    "fb_mc_6483_2": 6483,
     # --- TIKTOK ---
     "tt_mc_6486_1": 6486,
     "tt_mc_6486_2": 6486,
@@ -312,7 +313,7 @@ SERVICES = {
         ]
     },
     "fb_follow": {
-        "title": "👤 TĂNG FOLLOW / SUB",
+        "title": "👤 Tăng follow Profile & Page",
         "items": [
             {"id": "fb_mc_6444_1", "name": "👑 S8 Follow Clone + Vip", "price": 69.72},
             {"id": "fb_mc_6444_2", "name": "✋ Follow clone TAY", "price": 73.43},
@@ -341,23 +342,24 @@ SERVICES = {
         ]
     },
     "fb_share": {
-        "title": "🔄 TĂNG SHARE",
+        "title": "🔄 Tăng chia sẻ bài viết",
         "items": [
-            {"id": "fb_mc_6301_1", "name": "🌐 S68 Share Profile/Page/Group", "price": 83.62},
-            {"id": "fb_mc_6301_2", "name": "👻 S69 Share ảo All Link", "price": 102.06},
+            {"id": "fb_mc_6301_1", "name": "🌐 Share bài viết ( acc có nhiều bạn bè - lên nhanh)", "price": 210.62},
+            {"id": "fb_mc_6301_2", "name": "👻 S68 - Share - (Profile-Page-Group)- Không áp dụng video", "price": 102.06},
         ]
     },
     "fb_view": {
-        "title": "👁️ TĂNG MẮT LIVE",
+        "title": "👁️ Tăng view video",
         "items": [
-            {"id": "fb_mc_6473_1", "name": "🎬 View reel độc quyền", "price": 61.2},
-            {"id": "fb_mc_6473_2", "name": "⏱️ View facebook 3s chạy Reel", "price": 106.8},
+            {"id": "fb_mc_6597_1", "name": "🎬 View reel độc quyền", "price": 61.2},
+            {"id": "fb_mc_6597_2", "name": "⏱️  View /Reels 3s tốc độ nhanh [ Vip ]", "price": 106.8},
         ]
     },
     "fb_story": {
         "title": "👁️ TĂNG VIEW STORY",
         "items": [
             {"id": "fb_mc_6483_1", "name": "📱 S1 View Story Facebook", "price": 50.0},
+            {"id": "fb_mc_6483_2", "name": "📱 S32 - view story - tây clone", "price": 76.0},
         ]
     },
     "tt_like": {
