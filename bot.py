@@ -677,10 +677,10 @@ def fb_menu_keyboard():
         f"👇 <i>Vui lòng lựa chọn dịch vụ:</i> "
     )
     keyboard = [
-        [InlineKeyboardButton("👍 Tăng Like Bài Viết", callback_data="subcat_fb_like"), InlineKeyboardButton("👤 Tăng Theo Dõi / Sub", callback_data="subcat_fb_follow")],
-        [InlineKeyboardButton("💬 Tăng Bình Luận", callback_data="subcat_fb_cmt"), InlineKeyboardButton("⭐ Tăng Like Fanpage", callback_data="subcat_fb_page")],
-        [InlineKeyboardButton("👥 Tăng Thành Viên Group", callback_data="subcat_fb_group"), InlineKeyboardButton("🔄 Share Bài / Group", callback_data="subcat_fb_share")],
-        [InlineKeyboardButton("👁️ Tăng View / Mắt Live", callback_data="subcat_fb_view"), InlineKeyboardButton("👁️ Tăng View Story", callback_data="subcat_fb_story")],
+        [InlineKeyboardButton("👍 Tăng Like Bài Viết", callback_data="subcat_fb_like"), InlineKeyboardButton("👤 Tăng follow Profile & Page", callback_data="subcat_fb_follow")],
+        [InlineKeyboardButton("💬 Tăng Bình Luận", callback_data="subcat_fb_cmt"), InlineKeyboardButton("⭐ TĂNG LIKE & FOLLOW PAGE", callback_data="subcat_fb_page")],
+        [InlineKeyboardButton("👥 Tăng Thành Viên Group", callback_data="subcat_fb_group"), InlineKeyboardButton("🔄 Tăng chia sẻ bài viết(Share)", callback_data="subcat_fb_share")],
+        [InlineKeyboardButton("👁️  Tăng view video(lượt xem)", callback_data="subcat_fb_view"), InlineKeyboardButton("👁️ Tăng View Story(lượt xem tin)", callback_data="subcat_fb_story")],
         [InlineKeyboardButton("🏠 Trở Về Menu Chính", callback_data="menu_main")]
     ]
     return text, InlineKeyboardMarkup(keyboard)
