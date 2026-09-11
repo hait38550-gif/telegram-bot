@@ -60,7 +60,7 @@ SMS_DB_FILE = "sms_db.json"
 SMM_SERVICES_FIXED = {
     # --- FACEBOOK ---
     "fb_mc_6683_1": 6683,
-    "fb_mc_6683_2": 6581,
+    "fb_mc_6683_2": 6683,
     "fb_mc_6683_3": 6683,
     "fb_mc_6683_4": 6683,
     "fb_mc_6444_1": 6444,
@@ -307,7 +307,7 @@ SERVICES = {
         "title": "👍 TĂNG LIKE BÀI VIẾT",
         "items": [
             {"id": "fb_mc_6683_1", "name": "✨ S1 Like clone xịn", "price": 99.0},
-            {"id": "fb_mc_6683_2", "name": "👆 S1 Like bấm tay (like việt 100%) buff 100 trở lên", "price": 130.4},
+            {"id": "fb_mc_6683_2", "name": "👆 S1 Like bấm tay  buff 100 trở lên", "price": 130.4},
             {"id": "fb_mc_6683_3", "name": "🛡️ S2 Like post dự phòng", "price": 110.35},
             {"id": "fb_mc_6683_4", "name": "⚡ S2 Like clone nhanh", "price": 90.0},
         ]
@@ -677,10 +677,10 @@ def fb_menu_keyboard():
         f"👇 <i>Vui lòng lựa chọn dịch vụ:</i> "
     )
     keyboard = [
-        [InlineKeyboardButton("👍 Tăng Like Bài Viết", callback_data="subcat_fb_like"), InlineKeyboardButton("👤 Tăng follow Profile & Page", callback_data="subcat_fb_follow")],
-        [InlineKeyboardButton("💬 Tăng Bình Luận", callback_data="subcat_fb_cmt"), InlineKeyboardButton("⭐ TĂNG LIKE & FOLLOW PAGE", callback_data="subcat_fb_page")],
+        [InlineKeyboardButton("👍 Tăng Like Bài Viết", callback_data="subcat_fb_like"), InlineKeyboardButton("👤 Tăng theo dõi tcn ", callback_data="subcat_fb_follow")],
+        [InlineKeyboardButton("💬 Tăng Bình Luận", callback_data="subcat_fb_cmt"), InlineKeyboardButton("⭐ Tăng like & FOLLOW PAGE", callback_data="subcat_fb_page")],
         [InlineKeyboardButton("👥 Tăng Thành Viên Group", callback_data="subcat_fb_group"), InlineKeyboardButton("🔄 Tăng chia sẻ bài viết(Share)", callback_data="subcat_fb_share")],
-        [InlineKeyboardButton("👁️  Tăng view video(lượt xem)", callback_data="subcat_fb_view"), InlineKeyboardButton("👁️ Tăng View Story(lượt xem tin)", callback_data="subcat_fb_story")],
+        [InlineKeyboardButton("👁️  Tăng lượt xem video fb", callback_data="subcat_fb_view"), InlineKeyboardButton("👁️ Tăng lượt xem Story(lượt xem tin)", callback_data="subcat_fb_story")],
         [InlineKeyboardButton("🏠 Trở Về Menu Chính", callback_data="menu_main")]
     ]
     return text, InlineKeyboardMarkup(keyboard)
