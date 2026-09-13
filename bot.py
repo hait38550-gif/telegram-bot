@@ -60,7 +60,7 @@ SMS_DB_FILE = "sms_db.json"
 SMM_SERVICES_FIXED = {
     # --- FACEBOOK ---
     "fb_mc_6683_1": 6683,
-    "fb_mc_6683_2": 6683,
+    "fb_mc_6682_2": 6682,
     "fb_mc_6683_3": 6683,
     "fb_mc_6683_4": 6683,
     "fb_mc_6444_1": 6444,
@@ -307,7 +307,7 @@ SERVICES = {
         "title": "👍 TĂNG LIKE BÀI VIẾT",
         "items": [
             {"id": "fb_mc_6683_1", "name": "✨ S1 Like clone xịn", "price": 99.0},
-            {"id": "fb_mc_6683_2", "name": "👆 S1 Like bấm tay  buff 100 trở lên", "price": 130.4},
+            {"id": "fb_mc_6682_2", "name": "👆 S1 Like bấm tay vn   buff 100 trở lên", "price": 130.4},
             {"id": "fb_mc_6683_3", "name": "🛡️ S2 Like post dự phòng", "price": 110.35},
             {"id": "fb_mc_6683_4", "name": "⚡ S2 Like clone nhanh", "price": 90.0},
         ]
