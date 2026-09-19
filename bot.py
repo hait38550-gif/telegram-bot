@@ -35,48 +35,55 @@ SEPAY_API_KEY = os.getenv("SEPAY_API_KEY", "")
 
 @app.route('/sepay-webhook', methods=['POST'])
 def sepay_webhook():
-    data = request.json
-    if not data:
-        return {"status": "error", "message": "No data"}, 400
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"status": "error", "message": "No data"}), 400
+
+        auth_header = request.headers.get("Authorization", "")
+        if SEPAY_API_KEY and f"Apikey {SEPAY_API_KEY}" not in auth_header:
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+        transfer_amount = float(data.get("transferAmount", 0))
+        content = str(data.get("content", ""))
+        transaction_id = data.get("id", "")
         
-    # Lấy thông tin giao dịch từ SePay (tùy thuộc vào cấu trúc payload của SePay)
-    content = data.get('content', '')  # Nội dung chuyển khoản
-    transfer_amount = float(data.get('transferAmount', 0)) # Số tiền chuyển
-    
-    # Trích xuất mã user hoặc ID từ nội dung chuyển khoản (Ví dụ cú pháp: NAP <user_id>)
-    # Bạn hãy điều chỉnh đoạn regex này cho khớp với cú pháp nạp tiền hiện tại của bot
-    import re
-    match = re.search(r'(?:NAP|NAPC|ID)\s*(\d+)', content, re.IGNORECASE)
-    
-    if match and transfer_amount > 0:
-        user_id = int(match.group(1))
+        transfer_type = data.get("transferType", "in")
+        if transfer_type != "in" or transfer_amount <= 0:
+            return jsonify({"status": "success", "message": "Ignored out transaction"}), 200
+
+        matched_ids = re.findall(r'\b\d{6,12}\b', content)
         
-        # 1. Thực hiện cộng tiền trực tiếp vào database của user
-        # (Thay thế đoạn này bằng hàm cộng tiền thực tế đang dùng trong code của bạn)
-        users = load_users_db() # Giả sử hàm tải DB user của bạn
-        if str(user_id) in users:
-            users[str(user_id)]['balance'] = users[str(user_id)].get('balance', 0) + transfer_amount
-            save_users_db(users)
-            
-            # 2. Gửi thông báo tự động ngay cho khách hàng qua Telegram Bot
-            try:
-                # Sử dụng token bot và thư viện gửi tin nhắn (ví dụ: requests tới API Telegram)
-                bot_token = "TOKEN_BOT_CUA_BAN"
-                text = (
-                    f"🎉 **NẠP TIỀN THÀNH CÔNG!**\n\n"
-                    f"• Số tài khoản/User ID: `{user_id}`\n"
-                    f"• Số tiền nhận: `{transfer_amount:,.0f} VNĐ`\n"
-                    f"• Nội dung: `{content}`\n\n"
-                    f"Hệ thống đã tự động cộng tiền vào tài khoản của bạn!"
-                )
-                requests.post(
-                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                    json={"chat_id": user_id, "text": text, "parse_mode": "Markdown"}
-                )
-            except Exception as e:
-                print(f"Lỗi gửi tin nhắn Telegram: {e}")
-                
-    return {"status": "success"}, 200
+        target_user_id = None
+        for uid_str in matched_ids:
+            uid = int(uid_str)
+            if uid in USERS_DB:
+                target_user_id = uid
+                break
+
+        if target_user_id:
+            user_data = get_user_data(target_user_id)
+            user_data["balance"] += transfer_amount
+            user_data["history"].append(f"Nạp tiền tự động (SePay #{transaction_id}): +{transfer_amount:,.0f}đ")
+            save_users_db()
+
+            new_balance = user_data["balance"]
+
+            # SỬA LỖI: Gửi thông báo trực tiếp qua asyncio.run để không bị xịt thông báo
+            if bot_app and bot_app.bot:
+                try:
+                    asyncio.run(notify_sepay_topup(target_user_id, transfer_amount, new_balance, transaction_id))
+                except Exception as notify_err:
+                    logging.error(f"❌ Lỗi thực thi notify_sepay_topup: {notify_err}")
+
+            return jsonify({"status": "success", "message": f"Topup {transfer_amount} for user {target_user_id}"}), 200
+        else:
+            logging.info(f"SePay Webhook: Không tìm thấy User ID phù hợp trong nội dung '{content}'")
+            return jsonify({"status": "success", "message": "User ID not found in content"}), 200
+
+    except Exception as e:
+        logging.error(f"Lỗi xử lý SePay Webhook: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 # ==================== TÍNH NĂNG TỰ ĐỘNG CỘNG TIỀN QUA SEPAY ====================
 async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
