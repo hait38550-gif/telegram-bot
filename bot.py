@@ -5,8 +5,9 @@ import time
 import html
 import asyncio
 import requests
+import re
 from threading import Thread
-from flask import Flask
+from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -19,12 +20,96 @@ from telegram.ext import (
     filters,
 )
 
+# Khai báo biến toàn cục cho Bot Application để gọi gửi tin nhắn từ Flask Webhook
+bot_app = None
+
 # ==================== TÍCH HỢP FLASK & THREADING CHO RENDER ====================
 app = Flask('')
 
 @app.route('/')
 def home():
     return "Bot SMM & Mua Tài Khoản is running and alive!"
+
+# ==================== TÍNH NĂNG TỰ ĐỘNG CỘNG TIỀN QUA SEPAY ====================
+SEPAY_API_KEY = os.getenv("SEPAY_API_KEY", "")
+
+@app.route('/sepay-webhook', methods=['POST'])
+def sepay_webhook():
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"status": "error", "message": "No data"}), 400
+
+        auth_header = request.headers.get("Authorization", "")
+        if SEPAY_API_KEY and f"Apikey {SEPAY_API_KEY}" not in auth_header:
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+        transfer_amount = float(data.get("transferAmount", 0))
+        content = str(data.get("content", ""))
+        transaction_id = data.get("id", "")
+        
+        transfer_type = data.get("transferType", "in")
+        if transfer_type != "in" or transfer_amount <= 0:
+            return jsonify({"status": "success", "message": "Ignored out transaction"}), 200
+
+        matched_ids = re.findall(r'\b\d{6,12}\b', content)
+        
+        target_user_id = None
+        for uid_str in matched_ids:
+            uid = int(uid_str)
+            if uid in USERS_DB:
+                target_user_id = uid
+                break
+
+        if target_user_id:
+            user_data = get_user_data(target_user_id)
+            user_data["balance"] += transfer_amount
+            user_data["history"].append(f"Nạp tiền tự động (SePay #{transaction_id}): +{transfer_amount:,.0f}đ")
+            save_users_db()
+
+            new_balance = user_data["balance"]
+
+            if bot_app and bot_app.loop:
+                asyncio.run_coroutine_threadsafe(
+                    notify_sepay_topup(target_user_id, transfer_amount, new_balance, transaction_id),
+                    bot_app.loop
+                )
+
+            return jsonify({"status": "success", "message": f"Topup {transfer_amount} for user {target_user_id}"}), 200
+        else:
+            logging.info(f"SePay Webhook: Không tìm thấy User ID phù hợp trong nội dung '{content}'")
+            return jsonify({"status": "success", "message": "User ID not found in content"}), 200
+
+    except Exception as e:
+        logging.error(f"Lỗi xử lý SePay Webhook: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
+    """Hàm hỗ trợ gửi tin nhắn báo nạp tiền tự động qua Telegram"""
+    try:
+        user_msg = (
+            f"🎉 <b>NẠP TIỀN TỰ ĐỘNG THÀNH CÔNG (SEPAY)!</b>\n\n"
+            f"💵 <b>Số tiền nạp:</b> <code>+{amount:,.0f} VNĐ</code>\n"
+            f"💳 <b>Số dư mới:</b> <code>{new_balance:,.0f} VNĐ</code>\n"
+            f"🆔 <b>Mã giao dịch:</b> <code>#{tx_id}</code>\n\n"
+            f"⚡ <i>Cảm ơn bạn đã sử dụng dịch vụ!</i>"
+        )
+        await bot_app.bot.send_message(chat_id=user_id, text=user_msg, parse_mode="HTML")
+    except Exception:
+        pass
+
+    try:
+        admin_msg = (
+            f"🔔 <b>THÔNG BÁO NẠP TIỀN AUTO (SEPAY)</b>\n"
+            f"----------------------------------------\n"
+            f"👤 <b>Khách hàng ID:</b> <code>{user_id}</code>\n"
+            f"💵 <b>Cộng tiền:</b> +{amount:,.0f} VNĐ\n"
+            f"💰 <b>Số dư mới:</b> {new_balance:,.0f} VNĐ\n"
+            f"🆔 <b>Mã GD SePay:</b> #{tx_id}"
+        )
+        await bot_app.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_msg, parse_mode="HTML")
+    except Exception:
+        pass
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -34,8 +119,8 @@ def keep_alive():
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
-# ==============================================================================
 
+# ==================== LOGGING & CẤU HÌNH CƠ BẢN ====================
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
     level=logging.INFO
