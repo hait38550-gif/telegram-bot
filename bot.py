@@ -69,7 +69,7 @@ def sepay_webhook():
 
             new_balance = user_data["balance"]
 
-            # SỬA LỖI: Gửi thông báo trực tiếp qua asyncio.run để không bị xịt thông báo
+            # Tự động thực thi gửi thông báo qua asyncio.run cho cả Khách & Admin ngay khi cộng tiền xong
             if bot_app and bot_app.bot:
                 try:
                     asyncio.run(notify_sepay_topup(target_user_id, transfer_amount, new_balance, transaction_id))
@@ -85,7 +85,6 @@ def sepay_webhook():
         logging.error(f"Lỗi xử lý SePay Webhook: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ==================== TÍNH NĂNG TỰ ĐỘNG CỘNG TIỀN QUA SEPAY ====================
 async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
     """Hàm gửi tin nhắn thông báo nạp tiền tự động qua Telegram cho Khách & Admin"""
     # 1. Thông báo cho khách hàng
@@ -101,6 +100,22 @@ async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
         logging.info(f"✅ Đã gửi thông báo nạp tiền thành công tới Khách hàng ID: {user_id}")
     except Exception as e:
         logging.error(f"❌ Lỗi gửi thông báo SePay cho Khách hàng {user_id}: {e}")
+
+    # 2. Thông báo tự động cho Admin ngay lập tức
+    try:
+        if ADMIN_CHAT_ID and str(ADMIN_CHAT_ID) != "YOUR_ADMIN_CHAT_ID":
+            admin_msg = (
+                f"🔔 <b>THÔNG BÁO NẠP TIỀN AUTO (SEPAY)</b>\n"
+                f"----------------------------------------\n"
+                f"👤 <b>Khách hàng ID:</b> <code>{user_id}</code>\n"
+                f"💵 <b>Cộng tiền:</b> +{amount:,.0f} VNĐ\n"
+                f"💰 <b>Số dư mới:</b> {new_balance:,.0f} VNĐ\n"
+                f"🆔 <b>Mã GD SePay:</b> #{tx_id}"
+            )
+            await bot_app.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=admin_msg, parse_mode="HTML")
+            logging.info(f"✅ Đã gửi thông báo SePay cho Admin (ID: {ADMIN_CHAT_ID})")
+    except Exception as e:
+        logging.error(f"❌ Lỗi gửi thông báo SePay cho Admin: {e}")
 
     # 2. Thông báo cho Admin
     try:
@@ -1410,7 +1425,7 @@ async def receive_sms_phone_handler(update: Update, context: ContextTypes.DEFAUL
     if context.user_data.get("is_adding_free_phone", False) and active_sms:
         current_pkg = active_sms[0]
         expire_time = current_pkg["expire_time"]
-        pkg_name = current_pkg["
+        pkg_name = current_pkg["package"]
 
         sms_entry = {
             "phone": phone,
@@ -2755,4 +2770,4 @@ def main():
     application.run_polling()
 
 if __name__ == "__main__":
- main() 
+ main()
