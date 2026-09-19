@@ -84,8 +84,10 @@ def sepay_webhook():
         logging.error(f"Lỗi xử lý SePay Webhook: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# ==================== TÍNH NĂNG TỰ ĐỘNG CỘNG TIỀN QUA SEPAY ====================
 async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
-    """Hàm hỗ trợ gửi tin nhắn báo nạp tiền tự động qua Telegram"""
+    """Hàm gửi tin nhắn thông báo nạp tiền tự động qua Telegram cho Khách & Admin"""
+    # 1. Thông báo cho khách hàng
     try:
         user_msg = (
             f"🎉 <b>NẠP TIỀN TỰ ĐỘNG THÀNH CÔNG (SEPAY)!</b>\n\n"
@@ -95,21 +97,25 @@ async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
             f"⚡ <i>Cảm ơn bạn đã sử dụng dịch vụ!</i>"
         )
         await bot_app.bot.send_message(chat_id=user_id, text=user_msg, parse_mode="HTML")
+        logging.info(f"✅ Đã gửi thông báo nạp tiền thành công tới Khách hàng ID: {user_id}")
     except Exception as e:
-        logging.error(f"Lỗi gửi thông báo SePay cho khách hàng {user_id}: {e}")
+        logging.error(f"❌ Lỗi gửi thông báo SePay cho Khách hàng {user_id}: {e}")
 
+    # 2. Thông báo cho Admin
     try:
-        admin_msg = (
-            f"🔔 <b>THÔNG BÁO NẠP TIỀN AUTO (SEPAY)</b>\n"
-            f"----------------------------------------\n"
-            f"👤 <b>Khách hàng ID:</b> <code>{user_id}</code>\n"
-            f"💵 <b>Cộng tiền:</b> +{amount:,.0f} VNĐ\n"
-            f"💰 <b>Số dư mới:</b> {new_balance:,.0f} VNĐ\n"
-            f"🆔 <b>Mã GD SePay:</b> #{tx_id}"
-        )
-        await bot_app.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_msg, parse_mode="HTML")
+        if ADMIN_CHAT_ID and str(ADMIN_CHAT_ID) != "YOUR_ADMIN_CHAT_ID":
+            admin_msg = (
+                f"🔔 <b>THÔNG BÁO NẠP TIỀN AUTO (SEPAY)</b>\n"
+                f"----------------------------------------\n"
+                f"👤 <b>Khách hàng ID:</b> <code>{user_id}</code>\n"
+                f"💵 <b>Cộng tiền:</b> +{amount:,.0f} VNĐ\n"
+                f"💰 <b>Số dư mới:</b> {new_balance:,.0f} VNĐ\n"
+                f"🆔 <b>Mã GD SePay:</b> #{tx_id}"
+            )
+            await bot_app.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=admin_msg, parse_mode="HTML")
+            logging.info(f"✅ Đã gửi thông báo SePay cho Admin (ID: {ADMIN_CHAT_ID})")
     except Exception as e:
-        logging.error(f"Lỗi gửi thông báo SePay cho Admin: {e}")
+        logging.error(f"❌ Lỗi gửi thông báo SePay cho Admin: {e}")
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
