@@ -95,8 +95,8 @@ async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
             f"⚡ <i>Cảm ơn bạn đã sử dụng dịch vụ!</i>"
         )
         await bot_app.bot.send_message(chat_id=user_id, text=user_msg, parse_mode="HTML")
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"Lỗi gửi thông báo SePay cho khách hàng {user_id}: {e}")
 
     try:
         admin_msg = (
@@ -108,8 +108,8 @@ async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
             f"🆔 <b>Mã GD SePay:</b> #{tx_id}"
         )
         await bot_app.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_msg, parse_mode="HTML")
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"Lỗi gửi thông báo SePay cho Admin: {e}")
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
