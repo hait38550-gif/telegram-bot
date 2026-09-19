@@ -69,11 +69,12 @@ def sepay_webhook():
 
             new_balance = user_data["balance"]
 
-            if bot_app and bot_app.loop:
-                asyncio.run_coroutine_threadsafe(
-                    notify_sepay_topup(target_user_id, transfer_amount, new_balance, transaction_id),
-                    bot_app.loop
-                )
+            # SỬA LỖI: Gửi thông báo trực tiếp qua asyncio.run để không bị xịt thông báo
+            if bot_app and bot_app.bot:
+                try:
+                    asyncio.run(notify_sepay_topup(target_user_id, transfer_amount, new_balance, transaction_id))
+                except Exception as notify_err:
+                    logging.error(f"❌ Lỗi thực thi notify_sepay_topup: {notify_err}")
 
             return jsonify({"status": "success", "message": f"Topup {transfer_amount} for user {target_user_id}"}), 200
         else:
@@ -305,7 +306,6 @@ def save_sms_db():
         logging.error(f"Lỗi khi lưu database sms: {e}")
 
 SMS_DB = load_sms_db()
-
 GROUPS_PAGE_1 = [
     {"id": "gr_1", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/689086271422497?locale=vi_VN", "mem": 1800000},
     {"id": "gr_2", "name": "Mua Ban Acc Playtogether", "link": "https://www.facebook.com/groups/1438781170008706?locale=vi_VN", "mem": 1700000},
