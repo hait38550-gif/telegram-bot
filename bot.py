@@ -1410,7 +1410,7 @@ async def receive_sms_phone_handler(update: Update, context: ContextTypes.DEFAUL
     if context.user_data.get("is_adding_free_phone", False) and active_sms:
         current_pkg = active_sms[0]
         expire_time = current_pkg["expire_time"]
-        pkg_name = current_pkg["package"]
+        pkg_name = current_pkg["
 
         sms_entry = {
             "phone": phone,
