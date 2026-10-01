@@ -152,7 +152,7 @@ SMS_DB_FILE = "sms_db.json"
 SMM_SERVICES_FIXED = {
     # --- FACEBOOK ---
     "fb_mc_6683_1": 6683,
-    "fb_mc_6682_2": 6682,
+    "fb_mc_6560_2": 6560,
     "fb_mc_6683_3": 6683,
     "fb_mc_6683_4": 6683,
     "fb_mc_6444_1": 6444,
