@@ -6,9 +6,13 @@ import html
 import asyncio
 import requests
 import re
+import base64
+import sys
+import threading
 from threading import Thread
 from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -20,8 +24,11 @@ from telegram.ext import (
     filters,
 )
 
-# Khai báo biến toàn cục cho Bot Application để gọi gửi tin nhắn từ Flask Webhook
+# Biến toàn cục cho Bot Application (giữ lại để tương thích)
 bot_app = None
+
+# Khóa dùng chung giữa luồng Flask (webhook) và luồng bot khi sửa dữ liệu khách
+DB_LOCK = threading.RLock()
 
 # ==================== TÍCH HỢP FLASK & THREADING CHO RENDER ====================
 app = Flask('')
@@ -30,79 +37,69 @@ app = Flask('')
 def home():
     return "Bot SMM & Mua Tài Khoản is running and alive!"
 
+# ==================== GỌI TELEGRAM API ĐỒNG BỘ (DÙNG CHO WEBHOOK) ====================
+# Webhook chạy ở luồng Flask riêng, không dùng chung event loop với bot,
+# nên gửi thông báo bằng HTTP trực tiếp tới Telegram để luôn gửi được.
+def tg_call(method, payload):
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
+            json=payload,
+            timeout=15
+        )
+        return r.json()
+    except Exception as e:
+        logging.error(f"❌ Lỗi gọi Telegram API ({method}): {e}")
+        return None
+
+def _countdown_delete_worker(chat_id, message_id, base_text, seconds=30):
+    remaining = seconds
+    while remaining > 0:
+        time.sleep(5)
+        remaining -= 5
+        if remaining <= 0:
+            break
+        tg_call("editMessageText", {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": f"{base_text}\n\n⏱️ <i>Tin nhắn này sẽ tự động xóa sau {remaining}s...</i>",
+            "parse_mode": "HTML"
+        })
+    tg_call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+
+def send_auto_delete_message(chat_id, base_text, seconds=30):
+    """Gửi tin nhắn rồi tự xóa sau N giây (có đếm ngược)."""
+    res = tg_call("sendMessage", {
+        "chat_id": chat_id,
+        "text": f"{base_text}\n\n⏱️ <i>Tin nhắn này sẽ tự động xóa sau {seconds}s...</i>",
+        "parse_mode": "HTML"
+    })
+    if res and res.get("ok"):
+        message_id = res["result"]["message_id"]
+        Thread(
+            target=_countdown_delete_worker,
+            args=(chat_id, message_id, base_text, seconds),
+            daemon=True
+        ).start()
+        return True
+    logging.error(f"❌ Không gửi được thông báo tới {chat_id}: {res}")
+    return False
+
 # ==================== TÍNH NĂNG TỰ ĐỘNG CỘNG TIỀN QUA SEPAY ====================
 SEPAY_API_KEY = os.getenv("SEPAY_API_KEY", "")
 
-@app.route('/sepay-webhook', methods=['POST'])
-def sepay_webhook():
-    try:
-        data = request.get_json(force=True)
-        if not data:
-            return jsonify({"status": "error", "message": "No data"}), 400
-
-        auth_header = request.headers.get("Authorization", "")
-        if SEPAY_API_KEY and f"Apikey {SEPAY_API_KEY}" not in auth_header:
-            return jsonify({"status": "error", "message": "Unauthorized"}), 401
-
-        transfer_amount = float(data.get("transferAmount", 0))
-        content = str(data.get("content", ""))
-        transaction_id = data.get("id", "")
-        
-        transfer_type = data.get("transferType", "in")
-        if transfer_type != "in" or transfer_amount <= 0:
-            return jsonify({"status": "success", "message": "Ignored out transaction"}), 200
-
-        matched_ids = re.findall(r'\b\d{6,12}\b', content)
-        
-        target_user_id = None
-        for uid_str in matched_ids:
-            uid = int(uid_str)
-            if uid in USERS_DB:
-                target_user_id = uid
-                break
-
-        if target_user_id:
-            user_data = get_user_data(target_user_id)
-            user_data["balance"] += transfer_amount
-            user_data["history"].append(f"Nạp tiền tự động (SePay #{transaction_id}): +{transfer_amount:,.0f}đ")
-            save_users_db()
-
-            new_balance = user_data["balance"]
-
-            # SỬA LỖI: Gửi thông báo trực tiếp qua asyncio.run để không bị xịt thông báo
-            if bot_app and bot_app.bot:
-                try:
-                    asyncio.run(notify_sepay_topup(target_user_id, transfer_amount, new_balance, transaction_id))
-                except Exception as notify_err:
-                    logging.error(f"❌ Lỗi thực thi notify_sepay_topup: {notify_err}")
-
-            return jsonify({"status": "success", "message": f"Topup {transfer_amount} for user {target_user_id}"}), 200
-        else:
-            logging.info(f"SePay Webhook: Không tìm thấy User ID phù hợp trong nội dung '{content}'")
-            return jsonify({"status": "success", "message": "User ID not found in content"}), 200
-
-    except Exception as e:
-        logging.error(f"Lỗi xử lý SePay Webhook: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-# ==================== TÍNH NĂNG TỰ ĐỘNG CỘNG TIỀN QUA SEPAY ====================
-async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
-    """Hàm gửi tin nhắn thông báo nạp tiền tự động qua Telegram cho Khách & Admin"""
-    # 1. Thông báo cho khách hàng
-    try:
-        user_msg = (
-            f"🎉 <b>NẠP TIỀN TỰ ĐỘNG THÀNH CÔNG (SEPAY)!</b>\n\n"
-            f"💵 <b>Số tiền nạp:</b> <code>+{amount:,.0f} VNĐ</code>\n"
-            f"💳 <b>Số dư mới:</b> <code>{new_balance:,.0f} VNĐ</code>\n"
-            f"🆔 <b>Mã giao dịch:</b> <code>#{tx_id}</code>\n\n"
-            f"⚡ <i>Cảm ơn bạn đã sử dụng dịch vụ!</i>"
-        )
-        await bot_app.bot.send_message(chat_id=user_id, text=user_msg, parse_mode="HTML")
+def notify_sepay_topup_sync(user_id, amount, new_balance, tx_id):
+    """Thông báo nạp tiền tự động cho Khách (tự xóa sau 30s) & Admin."""
+    user_text = (
+        f"🎉 <b>NẠP TIỀN TỰ ĐỘNG THÀNH CÔNG (SEPAY)!</b>\n\n"
+        f"💵 <b>Số tiền nạp:</b> <code>+{amount:,.0f} VNĐ</code>\n"
+        f"💳 <b>Số dư mới:</b> <code>{new_balance:,.0f} VNĐ</code>\n"
+        f"🆔 <b>Mã giao dịch:</b> <code>#{tx_id}</code>\n\n"
+        f"⚡ <i>Cảm ơn bạn đã sử dụng dịch vụ!</i>"
+    )
+    if send_auto_delete_message(user_id, user_text, 30):
         logging.info(f"✅ Đã gửi thông báo nạp tiền thành công tới Khách hàng ID: {user_id}")
-    except Exception as e:
-        logging.error(f"❌ Lỗi gửi thông báo SePay cho Khách hàng {user_id}: {e}")
 
-    # 2. Thông báo cho Admin
     try:
         if ADMIN_CHAT_ID and str(ADMIN_CHAT_ID) != "YOUR_ADMIN_CHAT_ID":
             admin_msg = (
@@ -113,19 +110,89 @@ async def notify_sepay_topup(user_id, amount, new_balance, tx_id):
                 f"💰 <b>Số dư mới:</b> {new_balance:,.0f} VNĐ\n"
                 f"🆔 <b>Mã GD SePay:</b> #{tx_id}"
             )
-            await bot_app.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=admin_msg, parse_mode="HTML")
-            logging.info(f"✅ Đã gửi thông báo SePay cho Admin (ID: {ADMIN_CHAT_ID})")
+            tg_call("sendMessage", {"chat_id": int(ADMIN_CHAT_ID), "text": admin_msg, "parse_mode": "HTML"})
     except Exception as e:
         logging.error(f"❌ Lỗi gửi thông báo SePay cho Admin: {e}")
 
+@app.route('/sepay-webhook', methods=['POST'])
+def sepay_webhook():
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            return jsonify({"status": "error", "message": "No data"}), 400
+
+        auth_header = request.headers.get("Authorization", "")
+        if SEPAY_API_KEY and f"Apikey {SEPAY_API_KEY}" not in auth_header:
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+        transfer_amount = float(data.get("transferAmount", 0))
+        content = str(data.get("content", ""))
+        transaction_id = data.get("id", "")
+
+        transfer_type = data.get("transferType", "in")
+        if transfer_type != "in" or transfer_amount <= 0:
+            return jsonify({"status": "success", "message": "Ignored out transaction"}), 200
+
+        tx_key = str(transaction_id) if transaction_id not in ("", None) else None
+        matched_ids = re.findall(r'(?<!\d)\d{6,12}(?!\d)', content)
+
+        with DB_LOCK:
+            # Chống cộng tiền trùng khi SePay gửi lại cùng một giao dịch
+            if tx_key and tx_key in PROCESSED_TX:
+                return jsonify({"status": "success", "message": "Duplicate transaction ignored"}), 200
+
+            target_user_id = None
+            for uid_str in matched_ids:
+                uid = int(uid_str)
+                if uid in USERS_DB:
+                    target_user_id = uid
+                    break
+
+            if target_user_id:
+                user_data = get_user_data(target_user_id)
+                user_data["balance"] += transfer_amount
+                user_data["history"].append(f"Nạp tiền tự động (SePay #{transaction_id}): +{transfer_amount:,.0f}đ")
+                save_users_db()
+                new_balance = user_data["balance"]
+                if tx_key:
+                    mark_tx_processed(tx_key)
+
+        if target_user_id:
+            Thread(
+                target=notify_sepay_topup_sync,
+                args=(target_user_id, transfer_amount, new_balance, transaction_id),
+                daemon=True
+            ).start()
+            return jsonify({"status": "success", "message": f"Topup {transfer_amount} for user {target_user_id}"}), 200
+        else:
+            logging.info(f"SePay Webhook: Không tìm thấy User ID phù hợp trong nội dung '{content}'")
+            return jsonify({"status": "success", "message": "User ID not found in content"}), 200
+
+    except Exception as e:
+        logging.error(f"Lỗi xử lý SePay Webhook: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
+
+def self_ping_loop():
+    """Tự gọi chính mình mỗi 10 phút để Render free không ngủ."""
+    url = os.getenv("RENDER_EXTERNAL_URL", "")
+    if not url:
+        return
+    while True:
+        time.sleep(600)
+        try:
+            requests.get(url, timeout=10)
+        except Exception:
+            pass
 
 def keep_alive():
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
+    Thread(target=self_ping_loop, daemon=True).start()
 
 # ==================== LOGGING & CẤU HÌNH CƠ BẢN ====================
 logging.basicConfig(
@@ -144,9 +211,136 @@ BANK_INFO = {
     "account_name": "NGUYEN TIEN DAT"
 }
 
-DB_FILE = "users_db.json"
-GITCODE_DB_FILE = "gitcode_db.json"
-SMS_DB_FILE = "sms_db.json"
+# ==================== LƯU TRỮ DỮ LIỆU BỀN VỮNG ====================
+# DB_DIR: thư mục lưu file dữ liệu. Nếu dùng Render Persistent Disk, đặt DB_DIR=/data
+DB_DIR = os.getenv("DB_DIR", ".")
+try:
+    os.makedirs(DB_DIR, exist_ok=True)
+except Exception:
+    pass
+
+DB_FILE = os.path.join(DB_DIR, "users_db.json")
+GITCODE_DB_FILE = os.path.join(DB_DIR, "gitcode_db.json")
+SMS_DB_FILE = os.path.join(DB_DIR, "sms_db.json")
+SEPAY_TX_FILE = os.path.join(DB_DIR, "sepay_tx.json")
+
+# Backup tự động lên một repo GitHub RIÊNG (private) để không mất dữ liệu khi Render chạy lại.
+# Biến môi trường: BACKUP_GITHUB_TOKEN, BACKUP_GITHUB_REPO (dạng user/repo), BACKUP_GITHUB_BRANCH (mặc định main)
+BACKUP_TOKEN = os.getenv("BACKUP_GITHUB_TOKEN", "")
+BACKUP_REPO = os.getenv("BACKUP_GITHUB_REPO", "")
+BACKUP_BRANCH = os.getenv("BACKUP_GITHUB_BRANCH", "main")
+BACKUP_ENABLED = bool(BACKUP_TOKEN and BACKUP_REPO)
+
+_BACKUP_SHA = {}
+_BACKUP_DIRTY = set()
+_BACKUP_LOCK = threading.Lock()
+
+def _gh_headers(raw=False):
+    return {
+        "Authorization": f"Bearer {BACKUP_TOKEN}",
+        "Accept": "application/vnd.github.raw+json" if raw else "application/vnd.github+json",
+    }
+
+def _gh_url(name):
+    return f"https://api.github.com/repos/{BACKUP_REPO}/contents/{name}"
+
+def backup_restore(path):
+    """Nếu file local chưa có (Render vừa deploy lại) thì tải bản backup về."""
+    if not BACKUP_ENABLED or os.path.exists(path):
+        return
+    name = os.path.basename(path)
+    last_err = None
+    for _ in range(3):
+        try:
+            r = requests.get(_gh_url(name), headers=_gh_headers(), params={"ref": BACKUP_BRANCH}, timeout=20)
+            if r.status_code == 404:
+                logging.info(f"Backup: chưa có bản sao của {name}, bắt đầu dữ liệu mới.")
+                return
+            if r.status_code == 200:
+                info = r.json()
+                _BACKUP_SHA[name] = info.get("sha")
+                if info.get("content"):
+                    raw = base64.b64decode(info["content"])
+                else:
+                    rr = requests.get(_gh_url(name), headers=_gh_headers(raw=True), params={"ref": BACKUP_BRANCH}, timeout=30)
+                    rr.raise_for_status()
+                    raw = rr.content
+                with open(path, "wb") as f:
+                    f.write(raw)
+                logging.info(f"✅ Backup: đã khôi phục {name} từ GitHub.")
+                return
+            last_err = f"HTTP {r.status_code}: {r.text[:200]}"
+        except Exception as e:
+            last_err = str(e)
+        time.sleep(2)
+    # Không khôi phục được -> dừng để Render tự chạy lại, tránh ghi đè backup bằng dữ liệu rỗng
+    logging.critical(f"❌ Không thể khôi phục {name} từ backup ({last_err}). Dừng bot để bảo vệ dữ liệu.")
+    sys.exit(1)
+
+def backup_upload(path):
+    if not os.path.exists(path):
+        return
+    name = os.path.basename(path)
+    with open(path, "rb") as f:
+        raw = f.read()
+    payload = {
+        "message": f"backup {name}",
+        "content": base64.b64encode(raw).decode(),
+        "branch": BACKUP_BRANCH,
+    }
+    sha = _BACKUP_SHA.get(name)
+    if sha:
+        payload["sha"] = sha
+    r = requests.put(_gh_url(name), headers=_gh_headers(), json=payload, timeout=30)
+    if r.status_code in (409, 422):
+        g = requests.get(_gh_url(name), headers=_gh_headers(), params={"ref": BACKUP_BRANCH}, timeout=20)
+        if g.status_code == 200:
+            payload["sha"] = g.json().get("sha")
+        else:
+            payload.pop("sha", None)
+        r = requests.put(_gh_url(name), headers=_gh_headers(), json=payload, timeout=30)
+    if r.status_code in (200, 201):
+        _BACKUP_SHA[name] = r.json()["content"]["sha"]
+    else:
+        raise RuntimeError(f"Backup {name} lỗi HTTP {r.status_code}: {r.text[:200]}")
+
+def mark_dirty(path):
+    if BACKUP_ENABLED:
+        with _BACKUP_LOCK:
+            _BACKUP_DIRTY.add(path)
+
+def flush_backup():
+    if not BACKUP_ENABLED:
+        return
+    with _BACKUP_LOCK:
+        items = list(_BACKUP_DIRTY)
+        _BACKUP_DIRTY.clear()
+    for p in items:
+        try:
+            backup_upload(p)
+        except Exception as e:
+            logging.error(f"Lỗi backup {p}: {e}")
+            with _BACKUP_LOCK:
+                _BACKUP_DIRTY.add(p)
+
+def _backup_worker():
+    while True:
+        time.sleep(15)
+        flush_backup()
+
+def start_backup_worker():
+    if BACKUP_ENABLED:
+        Thread(target=_backup_worker, daemon=True).start()
+        logging.info("✅ Đã bật backup dữ liệu lên GitHub.")
+    else:
+        logging.warning("⚠️ Chưa cấu hình BACKUP_GITHUB_TOKEN/BACKUP_GITHUB_REPO: dữ liệu sẽ mất khi Render deploy lại nếu không dùng Persistent Disk.")
+
+def atomic_json_dump(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=4)
+    os.replace(tmp, path)
+
 
 # ==================== CẤU HÌNH SMM API ====================
 SMM_SERVICES_FIXED = {
@@ -251,61 +445,79 @@ def call_smm_api(action, data=None):
         logging.error(f"Lỗi kết nối SMM API ({action}): {e}")
         return None
 
-def load_users_db():
-    if os.path.exists(DB_FILE):
+def _load_json(path, default):
+    backup_restore(path)
+    if os.path.exists(path):
         try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return {int(k): v for k, v in data.items()}
-        except Exception:
-            return {}
-    return {}
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            # File hỏng: giữ lại bản hỏng để cứu, không ghi đè mất dữ liệu
+            logging.error(f"File {path} bị lỗi ({e}), đã đổi tên để giữ lại.")
+            try:
+                os.replace(path, f"{path}.corrupt-{int(time.time())}")
+            except Exception:
+                pass
+    return default
+
+def _save_json(path, obj, label):
+    with DB_LOCK:
+        for _ in range(3):
+            try:
+                atomic_json_dump(path, obj)
+                mark_dirty(path)
+                return
+            except RuntimeError:
+                time.sleep(0.01)  # dict đổi kích thước giữa chừng, thử lại
+            except Exception as e:
+                logging.error(f"Lỗi khi lưu database {label}: {e}")
+                return
+
+def load_users_db():
+    data = _load_json(DB_FILE, {})
+    try:
+        return {int(k): v for k, v in data.items()}
+    except Exception:
+        return {}
 
 def save_users_db():
-    try:
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(USERS_DB, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        logging.error(f"Lỗi khi lưu database user: {e}")
+    _save_json(DB_FILE, USERS_DB, "user")
 
 USERS_DB = load_users_db()
 
 def load_gitcode_db():
-    if os.path.exists(GITCODE_DB_FILE):
-        try:
-            with open(GITCODE_DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    data = _load_json(GITCODE_DB_FILE, {})
+    return data if isinstance(data, dict) else {}
 
 def save_gitcode_db():
-    try:
-        with open(GITCODE_DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(GITCODE_DB, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        logging.error(f"Lỗi khi lưu database gitcode: {e}")
+    _save_json(GITCODE_DB_FILE, GITCODE_DB, "gitcode")
 
 GITCODE_DB = load_gitcode_db()
 
 def load_sms_db():
-    if os.path.exists(SMS_DB_FILE):
-        try:
-            with open(SMS_DB_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return {int(k): v for k, v in data.items()}
-        except Exception:
-            return {}
-    return {}
+    data = _load_json(SMS_DB_FILE, {})
+    try:
+        return {int(k): v for k, v in data.items()}
+    except Exception:
+        return {}
 
 def save_sms_db():
-    try:
-        with open(SMS_DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(SMS_DB, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        logging.error(f"Lỗi khi lưu database sms: {e}")
+    _save_json(SMS_DB_FILE, SMS_DB, "sms")
 
 SMS_DB = load_sms_db()
+
+# Danh sách mã giao dịch SePay đã xử lý (chống cộng tiền 2 lần)
+_tx_data = _load_json(SEPAY_TX_FILE, {})
+PROCESSED_TX = _tx_data if isinstance(_tx_data, dict) else {}
+
+def mark_tx_processed(tx_key):
+    with DB_LOCK:
+        PROCESSED_TX[tx_key] = int(time.time())
+        if len(PROCESSED_TX) > 5000:
+            for k in sorted(PROCESSED_TX, key=PROCESSED_TX.get)[:1000]:
+                PROCESSED_TX.pop(k, None)
+        _save_json(SEPAY_TX_FILE, PROCESSED_TX, "sepay_tx")
+
 GROUPS_PAGE_1 = [
     {"id": "gr_1", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/689086271422497?locale=vi_VN", "mem": 1800000},
     {"id": "gr_2", "name": "Mua Ban Acc Playtogether", "link": "https://www.facebook.com/groups/1438781170008706?locale=vi_VN", "mem": 1700000},
@@ -853,6 +1065,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     text, reply_markup = main_menu_keyboard(user.id, user.username, user.first_name)
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
+    return ConversationHandler.END
 
 async def admin_topup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -999,8 +1212,9 @@ async def receive_custom_gitcode_handler(update: Update, context: ContextTypes.D
 
     await update.message.reply_text(
         f"✅ TẠO GITCODE THÀNH CÔNG!\n\n"
-        f"🎁 Mã: `{code}`\n"
+        f"🎁 Mã: <code>{html.escape(code)}</code>\n"
         f"💵 Giá trị: {amount:,.0f} VND",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
     )
     return ConversationHandler.END
@@ -1028,8 +1242,9 @@ async def receive_admin_edit_user_handler(update: Update, context: ContextTypes.
     save_users_db()
 
     await update.message.reply_text(
-        f"✅ ĐÃ CẬP NHẬT SỐ DƯ CHO KHÁCH `{target_id}`\n"
+        f"✅ ĐÃ CẬP NHẬT SỐ DƯ CHO KHÁCH <code>{target_id}</code>\n"
         f"💰 Số dư mới: {new_balance:,.0f} VND",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
     )
     return ConversationHandler.END
@@ -1131,7 +1346,7 @@ async def background_order_status_checker(context: ContextTypes.DEFAULT_TYPE, or
     """Tiến trình kiểm tra trạng thái đơn hàng tự động 24/7 qua SMM API cứ mỗi 1 tiếng."""
     while True:
         await asyncio.sleep(3600)  # Đợi 1 tiếng kiểm tra lại
-        res = call_smm_api("status", {"order": order_id})
+        res = await asyncio.to_thread(call_smm_api, "status", {"order": order_id})
         if res and isinstance(res, dict):
             status = res.get("status", "").lower()
             if status in ["completed", "hoàn thành"]:
@@ -1223,22 +1438,61 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_bal = user_data["balance"]
 
     # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN =================
-    smm_service_id = SMM_SERVICES_FIXED.get(item_id_str, 6683)  
-    
+    smm_service_id = get_smm_service_id(item_id_str) or 6683
+
     payload_data = {
         "service": smm_service_id,
         "link": link,
         "quantity": quantity
     }
-    
+
     if "like" in item_id_str:
         payload_data["comments"] = "👍, ❤️, 😆"
 
-    smm_res = call_smm_api("add", payload_data)
-    
-    smm_order_id = "Không rõ"
+    # Chạy trong thread riêng để bot không bị đứng khi API chậm
+    smm_res = await asyncio.to_thread(call_smm_api, "add", payload_data)
+
+    smm_order_id = None
     if smm_res and isinstance(smm_res, dict) and "order" in smm_res:
         smm_order_id = smm_res.get("order")
+
+    if smm_order_id is None:
+        # Đặt đơn thất bại -> hoàn tiền lại cho khách
+        with DB_LOCK:
+            user_data["balance"] += total_price
+            user_data["history"].append(f"Hoàn tiền đơn lỗi: {selected_item.get('name')} | +{total_price:,.0f}đ")
+        save_users_db()
+
+        err_msg = ""
+        if isinstance(smm_res, dict) and smm_res.get("error"):
+            err_msg = f"\n📝 <b>Chi tiết:</b> {html.escape(str(smm_res.get('error')))}"
+        fail_text = (
+            f"❌ <b>ĐẶT ĐƠN THẤT BẠI!</b>\n\n"
+            f"📦 <b>Gói:</b> {html.escape(str(selected_item.get('name')))}\n"
+            f"💵 Đã hoàn lại <code>{total_price:,.0f}đ</code> vào số dư.\n"
+            f"💳 <b>Số dư hiện tại:</b> <code>{user_data['balance']:,.0f}đ</code>{err_msg}\n\n"
+            f"⚠️ <i>Vui lòng thử lại sau hoặc liên hệ Admin.</i>"
+        )
+        fail_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+        if update.callback_query:
+            await update.callback_query.edit_message_text(fail_text, reply_markup=fail_markup, parse_mode="HTML")
+        else:
+            await update.message.reply_text(fail_text, reply_markup=fail_markup, parse_mode="HTML")
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=(
+                    f"⚠️ <b>ĐƠN SMM LỖI - ĐÃ HOÀN TIỀN</b>\n"
+                    f"👤 Khách ID: <code>{user.id}</code>\n"
+                    f"📦 Gói: {html.escape(str(selected_item.get('name')))}\n"
+                    f"🔗 Link: <code>{html.escape(str(link))}</code>\n"
+                    f"📊 SL: {quantity:,} | 💵 {total_price:,.0f}đ{err_msg}"
+                ),
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+        return ConversationHandler.END
 
     success_text = (
         f"🎉 <b>ĐẶT HÀNG THÀNH CÔNG!</b>\n\n"
@@ -1366,7 +1620,7 @@ async def receive_bot_requirements_handler(update: Update, context: ContextTypes
     keyboard = [
         [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
     ]
-    await update.message.reply_text(success_text, parse_mode="HTML", reply_markup=keyboard)
+    await update.message.reply_text(success_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     user_mention = get_user_mention(user)
     admin_notice = (
@@ -1515,7 +1769,7 @@ async def receive_broadcast_media_handler(update: Update, context: ContextTypes.
         context.user_data["broadcast_media_id"] = video_id
     else:
         keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]]
-        await update.message.reply_text("⚠️ Vui lòng gửi **Hình ảnh**, **Video** hoặc bấm **Bỏ qua (Chỉ gửi chữ)**!", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Vui lòng gửi <b>Hình ảnh</b>, <b>Video</b> hoặc bấm <b>Bỏ qua (Chỉ gửi chữ)</b>!", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return INPUT_BROADCAST_PHOTO
 
     try:
@@ -1531,16 +1785,16 @@ async def receive_broadcast_media_handler(update: Update, context: ContextTypes.
             pass
 
     text = (
-        f"📢 **TẠO THÔNG BÁO CHO NGƯỜI DÙNG**\n"
+        f"📢 <b>TẠO THÔNG BÁO CHO NGƯỜI DÙNG</b>\n"
         f"----------------------------------------\n"
         f"✅ Đã nhận đính kèm media thành công.\n\n"
-        f"💬 Vui lòng gửi **Nội dung văn bản (caption)** cho thông báo (Hỗ trợ định dạng Markdown/HTML):"
+        f"💬 Vui lòng gửi <b>Nội dung văn bản (caption)</b> cho thông báo (Hỗ trợ định dạng Markdown):"
     )
     keyboard = [
         [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")],
         [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
     ]
-    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    msg = await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     context.user_data["prompt_msg_id"] = msg.message_id
     return INPUT_BROADCAST_TEXT
 
@@ -1571,7 +1825,7 @@ async def receive_broadcast_text_handler(update: Update, context: ContextTypes.D
     media_id = context.user_data.get("broadcast_media_id")
 
     preview_caption = (
-        f"📋 **XEM TRƯỚC NỘI DUNG THÔNG BÁO BROADCAST:**\n"
+        f"📋 *XEM TRƯỚC NỘI DUNG THÔNG BÁO BROADCAST:*\n"
         f"----------------------------------------\n\n"
         f"{text_content}"
     )
@@ -1581,12 +1835,18 @@ async def receive_broadcast_text_handler(update: Update, context: ContextTypes.D
         [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
     ]
 
-    if media_type == "photo":
-        msg = await update.message.reply_photo(photo=media_id, caption=preview_caption, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif media_type == "video":
-        msg = await update.message.reply_video(video=media_id, caption=preview_caption, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        msg = await update.message.reply_text(preview_caption, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    async def _send_preview(pm):
+        if media_type == "photo":
+            return await update.message.reply_photo(photo=media_id, caption=preview_caption, parse_mode=pm, reply_markup=InlineKeyboardMarkup(keyboard))
+        elif media_type == "video":
+            return await update.message.reply_video(video=media_id, caption=preview_caption, parse_mode=pm, reply_markup=InlineKeyboardMarkup(keyboard))
+        return await update.message.reply_text(preview_caption, parse_mode=pm, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    try:
+        msg = await _send_preview("Markdown")
+    except BadRequest:
+        # Nội dung có ký tự Markdown lỗi -> gửi dạng văn bản thường
+        msg = await _send_preview(None)
 
     context.user_data["prompt_msg_id"] = msg.message_id
     return ConversationHandler.END
@@ -1723,9 +1983,8 @@ async def receive_private_msg_text_handler(update: Update, context: ContextTypes
     await update.message.reply_text(result_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     return ConversationHandler.END
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     user = query.from_user
     data = query.data
 
@@ -1745,7 +2004,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
         ])
-        msg = await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        msg = await query_edit_or_replace_admin(update, context, text=text, parse_mode="HTML", reply_markup=keyboard)
         context.user_data["prompt_msg_id"] = msg.message_id
         return INPUT_USER_FEEDBACK
 
@@ -1754,6 +2013,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         target_uid = data.split(":")[1]
         context.user_data["private_target_id"] = int(target_uid)
+        context.user_data["private_media_type"] = "none"
+        context.user_data["private_media_id"] = None
         text = (
             f"👤 <b>GỬI TIN NHẮN TRẢ LỜI CHO KHÁCH ID:</b> <code>{target_uid}</code>\n"
             f"----------------------------------------\n"
@@ -2221,18 +2482,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         success_count = 0
         fail_count = 0
 
-        for uid in USERS_DB.keys():
+        async def _broadcast_one(uid, pm):
+            if media_type == "photo":
+                await context.bot.send_photo(chat_id=uid, photo=media_id, caption=text_content, parse_mode=pm)
+            elif media_type == "video":
+                await context.bot.send_video(chat_id=uid, video=media_id, caption=text_content, parse_mode=pm)
+            else:
+                await context.bot.send_message(chat_id=uid, text=text_content, parse_mode=pm)
+
+        for uid in list(USERS_DB.keys()):
             try:
-                if media_type == "photo":
-                    await context.bot.send_photo(chat_id=uid, photo=media_id, caption=text_content, parse_mode="Markdown")
-                elif media_type == "video":
-                    await context.bot.send_video(chat_id=uid, video=media_id, caption=text_content, parse_mode="Markdown")
-                else:
-                    await context.bot.send_message(chat_id=uid, text=text_content, parse_mode="Markdown")
+                try:
+                    await _broadcast_one(uid, "Markdown")
+                except BadRequest:
+                    await _broadcast_one(uid, None)
                 success_count += 1
-                time.sleep(0.1)
             except Exception:
                 fail_count += 1
+            await asyncio.sleep(0.05)
 
         result_text = (
             f"✅ <b>GỬI THÔNG BÁO BROADCAST HOÀN TẤT!</b>\n\n"
@@ -2346,6 +2613,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if cat_key in SERVICES:
             text, reply_markup = service_items_keyboard(cat_key)
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=reply_markup)
+        else:
+            await query.answer("⚠️ Dịch vụ này đang được cập nhật, vui lòng quay lại sau!", show_alert=True)
 
     elif data == "menu_gitcode":
         text = (
@@ -2614,6 +2883,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     elif data.startswith("admin_approve_topup:"):
+        if not is_admin(user.id, user.username):
+            return
+        done_msgs = context.bot_data.setdefault("done_msgs", set())
+        msg_key = (query.message.chat_id, query.message.message_id)
+        if msg_key in done_msgs:
+            return
+        done_msgs.add(msg_key)
         _, target_id_str, amount_str = data.split(":")
         target_id, amount = int(target_id_str), float(amount_str)
         user_data = get_user_data(target_id)
@@ -2644,6 +2920,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     elif data.startswith("admin_reject_topup:"):
+        if not is_admin(user.id, user.username):
+            return
+        done_msgs = context.bot_data.setdefault("done_msgs", set())
+        msg_key = (query.message.chat_id, query.message.message_id)
+        if msg_key in done_msgs:
+            return
+        done_msgs.add(msg_key)
         _, target_id_str, amount_str = data.split(":")
         target_id, amount = int(target_id_str), float(amount_str)
         
@@ -2665,6 +2948,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML"
             )
             await auto_delete_with_countdown(context, target_id, user_notify.message_id, user_reject_text, 30)
+        except Exception:
+            pass
+
+    elif data.startswith("admin_accept_order:") or data.startswith("admin_reject_order:"):
+        if not is_admin(user.id, user.username):
+            return
+        action, uid_str = data.split(":")
+        accepted = action == "admin_accept_order"
+        status_line = "✅ <b>ADMIN ĐÃ NHẬN ĐƠN</b>" if accepted else "❌ <b>ADMIN ĐÃ TỪ CHỐI ĐƠN</b>"
+        try:
+            await query.edit_message_text(f"{query.message.text_html}\n\n{status_line}", parse_mode="HTML")
+        except BadRequest:
+            pass
+        try:
+            if accepted:
+                notify_text = "✅ <b>Đơn hàng của bạn đã được Admin tiếp nhận</b> và đang được xử lý. Vui lòng chờ Admin liên hệ!"
+            else:
+                notify_text = f"❌ <b>Đơn hàng của bạn đã bị Admin từ chối.</b> Vui lòng liên hệ Admin {html.escape(ADMIN_USERNAME)} để được hỗ trợ."
+            await context.bot.send_message(chat_id=int(uid_str), text=notify_text, parse_mode="HTML")
         except Exception:
             pass
 
@@ -2700,19 +3002,86 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💬 <i>Vui lòng liên hệ Admin để tiến hành mua hàng nhanh nhất!</i>"
         )
         keyboard = [
-            [InlineKeyboardButton("↩️ Trở về", callback_data="products_p1")],
+            [InlineKeyboardButton("↩️ Trở về", callback_data=("products_p2" if cat_id in [c["id"] for c in CATEGORIES_PAGE_2] else "products_p1"))],
             [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
+# ==================== BỌC XỬ LÝ NÚT BẤM (CHỐNG SPAM, KHÔNG BỊ TREO) ====================
+# Các nút có hiện cảnh báo (alert) thì trả lời query sau khi xử lý xong
+ALERT_PREFIXES = (
+    "sms_cancel:", "sms_renew:", "admin_sms_cancel:", "admin_sms_renew:",
+    "delete_gc:", "group_detail_", "buy_group_now:", "admin_panel", "subcat_",
+)
+CLICK_COOLDOWN = 0.35
+_LAST_CLICK = {}
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data or ""
+    uid = query.from_user.id
+
+    # Bấm quá nhanh liên tục -> bỏ qua lượt thừa, giữ nguyên trạng thái hội thoại
+    now = time.monotonic()
+    if now - _LAST_CLICK.get(uid, 0) < CLICK_COOLDOWN:
+        try:
+            await query.answer()
+        except Exception:
+            pass
+        return None
+    _LAST_CLICK[uid] = now
+
+    needs_alert = data.startswith(ALERT_PREFIXES)
+    if not needs_alert:
+        try:
+            await query.answer()
+        except Exception:
+            pass
+
+    try:
+        result = await _button_handler_impl(update, context)
+    except BadRequest as e:
+        # Bấm lại đúng nút đang hiển thị -> Telegram báo "not modified", bỏ qua
+        if "message is not modified" in str(e).lower():
+            result = None
+        else:
+            raise
+    finally:
+        if needs_alert:
+            try:
+                await query.answer()
+            except Exception:
+                pass
+
+    # Không có trạng thái nhập liệu mới -> kết thúc hội thoại cũ để tránh nhận nhầm tin nhắn
+    return ConversationHandler.END if result is None else result
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    err = context.error
+    err_name = type(err).__name__
+    if err_name == "Conflict":
+        logging.warning("⚠️ Conflict getUpdates: có bản bot khác đang chạy (thường xảy ra ngắn lúc Render deploy lại).")
+        return
+    logging.error("Lỗi không bắt được trong bot:", exc_info=err)
 
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
         print("⚠️ Vui lòng cấu hình BOT_TOKEN chính xác trước khi chạy bot!")
         return
 
+    global bot_app
+    start_backup_worker()
     keep_alive()
 
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    application = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(True)      # xử lý nhiều người cùng lúc, không xếp hàng
+        .connection_pool_size(64)
+        .pool_timeout(15)
+        .build()
+    )
+    bot_app = application
 
     conv_handler = ConversationHandler(
         entry_points=[
@@ -2750,9 +3119,11 @@ def main():
 
     application.add_handler(CommandHandler("topup", admin_topup_cmd))
     application.add_handler(conv_handler)
+    application.add_error_handler(error_handler)
 
     print("🤖 Bot đang chạy...")
-    application.run_polling()
+    application.run_polling(drop_pending_updates=True)
+    flush_backup()  # đẩy dữ liệu lên backup lần cuối khi bị tắt (SIGTERM)
 
 if __name__ == "__main__":
  main()
