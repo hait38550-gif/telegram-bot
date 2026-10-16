@@ -203,7 +203,7 @@ logging.getLogger("httpx").setLevel(logging.INFO)
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "YourAdminUsername")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_ADMIN_CHAT_ID")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8819271780:AAGsTy8hw33K_0ItkCmHiNpg4Ndf7ZHDWII")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
 BANK_INFO = {
     "bank_name": "MBBank",
