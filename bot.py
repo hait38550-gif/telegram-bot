@@ -203,7 +203,7 @@ logging.getLogger("httpx").setLevel(logging.INFO)
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "YourAdminUsername")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_ADMIN_CHAT_ID")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8819271780:AAGsTy8hw33K_0ItkCmHiNpg4Ndf7ZHDWII")
 
 BANK_INFO = {
     "bank_name": "MBBank",
@@ -518,152 +518,6 @@ def mark_tx_processed(tx_key):
                 PROCESSED_TX.pop(k, None)
         _save_json(SEPAY_TX_FILE, PROCESSED_TX, "sepay_tx")
 
-# ==================== LỜI CHÚC TỰ ĐỘNG 7H SÁNG MỖI NGÀY ====================
-DAILY_GREETING_FILE = os.path.join(DB_DIR, "daily_greeting.json")
-_dg_data = _load_json(DAILY_GREETING_FILE, {})
-DAILY_STATE = _dg_data if isinstance(_dg_data, dict) else {}
-GREETING_HOUR = 7  # 7 giờ sáng giờ Việt Nam (UTC+7)
-
-DAILY_QUOTES = [
-    "Có công mài sắt, có ngày nên kim.",
-    "Thất bại là mẹ thành công.",
-    "Một cây làm chẳng nên non, ba cây chụm lại nên hòn núi cao.",
-    "Đi một ngày đàng, học một sàng khôn.",
-    "Không có việc gì khó, chỉ sợ lòng không bền.",
-    "Học, học nữa, học mãi.",
-    "Có chí thì nên.",
-    "Lá lành đùm lá rách.",
-    "Uống nước nhớ nguồn.",
-    "Gần mực thì đen, gần đèn thì rạng.",
-    "Ăn quả nhớ kẻ trồng cây.",
-    "Thời gian là vàng bạc, hãy trân trọng từng phút giây.",
-    "Hành trình vạn dặm bắt đầu từ một bước chân.",
-    "Đừng chờ cơ hội, hãy tự tạo ra cơ hội.",
-    "Kiên nhẫn là chìa khóa của mọi cánh cửa.",
-    "Mỗi ngày là một trang giấy trắng, hãy viết nên điều tuyệt vời.",
-    "Người thành công là người dám bắt đầu khi người khác còn do dự.",
-    "Sau cơn mưa trời lại sáng.",
-    "Nước chảy đá mòn.",
-    "Thua keo này, bày keo khác.",
-    "Chậm mà chắc còn hơn nhanh mà ẩu.",
-    "Làm việc hôm nay đừng để ngày mai.",
-    "Sức mạnh nằm ở sự kiên trì, không phải ở sự vội vàng.",
-    "Biết đủ là đủ, biết đủ là giàu.",
-    "Nụ cười là liều thuốc bổ rẻ nhất mà hiệu quả nhất.",
-    "Hãy sống như thể hôm nay là ngày cuối cùng, hãy học như thể bạn sẽ sống mãi.",
-    "Khó khăn chỉ là chiếc thang để ta bước lên cao hơn.",
-    "Tin vào bản thân là bước đầu tiên của mọi thành công.",
-    "Điều tuyệt vời nhất đến với những ai biết chờ đợi và nỗ lực.",
-    "Đừng sợ đi chậm, chỉ sợ đứng yên.",
-    "Một lời nói tử tế có thể sưởi ấm cả mùa đông.",
-    "Thành công không phải đích đến, mà là hành trình.",
-    "Sống là cho đâu chỉ nhận riêng mình.",
-    "Muốn đi nhanh hãy đi một mình, muốn đi xa hãy đi cùng nhau.",
-    "Mỗi sớm mai thức dậy là một món quà.",
-    "Lòng tốt là ngôn ngữ mà người điếc có thể nghe và người mù có thể thấy.",
-    "Đừng so sánh mình với người khác, hãy so sánh với chính mình của ngày hôm qua.",
-    "Bình tĩnh là sức mạnh lớn nhất trong mọi hoàn cảnh.",
-    "Cố gắng hôm nay, gặt hái ngày mai.",
-    "Điều bạn làm hôm nay quyết định bạn là ai ngày mai.",
-]
-
-DAILY_WISHES = [
-    "Chúc bạn một ngày mới tràn đầy năng lượng và niềm vui! ☀️",
-    "Chúc bạn hôm nay mọi việc đều suôn sẻ, gặp nhiều may mắn! 🍀",
-    "Chúc bạn một ngày làm việc hiệu quả và thật nhiều thành công! 💼",
-    "Chúc bạn luôn mạnh khỏe, bình an và hạnh phúc mỗi ngày! 💖",
-    "Chúc bạn hôm nay có thật nhiều đơn hàng và doanh thu tăng vọt! 📈",
-    "Chúc bạn ngày mới an lành, nụ cười luôn nở trên môi! 😊",
-    "Chúc bạn gặp nhiều quý nhân phù trợ trong ngày hôm nay! 🌟",
-    "Chúc bạn một ngày thật nhẹ nhàng, không áp lực, chỉ có niềm vui! 🌈",
-    "Chúc bạn tiền vào như nước, công việc thuận buồm xuôi gió! 💰",
-    "Chúc bạn ngày mới nhiều cảm hứng và ý tưởng sáng tạo! 💡",
-    "Chúc bạn hôm nay mọi dự định đều thành hiện thực! 🎯",
-    "Chúc bạn có một buổi sáng tuyệt vời bên những người thân yêu! 🏡",
-    "Chúc bạn sức khỏe dồi dào để chinh phục mọi thử thách! 💪",
-    "Chúc bạn hôm nay vạn sự như ý, tâm an vạn sự an! 🙏",
-    "Chúc bạn một ngày tràn ngập tiếng cười và những điều bất ngờ thú vị! 🎉",
-    "Chúc bạn luôn giữ vững tinh thần lạc quan và tích cực! ✨",
-    "Chúc bạn hôm nay làm gì cũng thắng, đi đâu cũng gặp may! 🏆",
-    "Chúc bạn một ngày mới thật bình yên và ý nghĩa! 🌿",
-    "Chúc bạn công việc hanh thông, tài lộc đầy nhà! 🧧",
-    "Chúc bạn ăn ngon, ngủ ngon và luôn vui vẻ! 🍜",
-    "Chúc bạn hôm nay đón nhận thật nhiều tin vui! 📩",
-    "Chúc bạn mỗi ngày trôi qua đều là một ngày đáng nhớ! 📅",
-    "Chúc bạn vượt qua mọi khó khăn để đạt được mục tiêu của mình! 🚀",
-    "Chúc bạn một ngày mới ngập tràn hy vọng và yêu thương! 🌸",
-    "Chúc bạn buôn may bán đắt, khách hàng đông vui! 🛒",
-    "Chúc bạn hôm nay tâm trạng thật tốt, mọi chuyện đều êm đẹp! 😄",
-    "Chúc bạn luôn có đủ động lực để theo đuổi ước mơ! 🌠",
-    "Chúc bạn một ngày thật năng suất và đầy cảm hứng! ⚡",
-    "Chúc bạn gặt hái thật nhiều thành quả từ những nỗ lực của mình! 🌾",
-    "Chúc bạn hôm nay trời đẹp, lòng vui, việc thuận! 🌤️",
-    "Chúc bạn gia đình hạnh phúc, sự nghiệp thăng hoa! 👨‍👩‍👧",
-    "Chúc bạn một ngày mới rạng rỡ như ánh bình minh! 🌅",
-    "Chúc bạn luôn bình tĩnh, sáng suốt trước mọi quyết định! 🧠",
-    "Chúc bạn hôm nay có thêm một bước tiến thật lớn! 👣",
-    "Chúc bạn xung quanh luôn có những người tử tế và đáng tin cậy! 🤝",
-    "Chúc bạn một ngày thư thái, mọi lo toan đều tan biến! ☕",
-    "Chúc bạn tài lộc dồi dào, phúc khí đầy nhà! 🍀",
-    "Chúc bạn một ngày mới đầy may mắn và bất ngờ tuyệt vời! 🎁",
-    "Chúc bạn luôn tỏa sáng theo cách riêng của mình! 💎",
-    "Chúc bạn kết thúc ngày hôm nay thật trọn vẹn và hài lòng! 🌙",
-    "Chúc bạn một ngày mới thắng lợi, ngày nào cũng là ngày vui! 🎊",
-]
-
-_VN_WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
-
-def build_daily_greeting(now_vn):
-    """Mỗi ngày chọn 1 cặp châm ngôn + lời chúc khác nhau (xoay vòng theo số ngày, 2 danh sách độ dài nguyên tố cùng nhau)."""
-    n = now_vn.date().toordinal()
-    quote = DAILY_QUOTES[n % len(DAILY_QUOTES)]
-    wish = DAILY_WISHES[(n * 7) % len(DAILY_WISHES)]
-    date_str = f"{now_vn.day:02d}/{now_vn.month:02d}/{now_vn.year}"
-    weekday = _VN_WEEKDAYS[now_vn.weekday()]
-    return (
-        f"🌅 <b>CHÀO BUỔI SÁNG!</b>\n"
-        f"════════════════════════════════\n"
-        f"📅 <b>{weekday}, ngày {date_str}</b>\n\n"
-        f"📖 <b>Châm ngôn hôm nay:</b>\n<i>\"{html.escape(quote)}\"</i>\n\n"
-        f"💌 <b>Lời chúc:</b>\n{html.escape(wish)}"
-    )
-
-def send_daily_greeting_to_all(now_vn):
-    text = build_daily_greeting(now_vn)
-    ok = fail = 0
-    with DB_LOCK:
-        user_ids = list(USERS_DB.keys())
-    for uid in user_ids:
-        res = tg_call("sendMessage", {"chat_id": uid, "text": text, "parse_mode": "HTML"})
-        if res and res.get("ok"):
-            ok += 1
-        else:
-            fail += 1
-        time.sleep(0.05)
-    logging.info(f"🌅 Đã gửi lời chúc buổi sáng: thành công {ok}, thất bại {fail}")
-
-def _daily_greeting_loop():
-    from datetime import datetime, timezone, timedelta
-    vn_tz = timezone(timedelta(hours=7))
-    while True:
-        try:
-            now_vn = datetime.now(vn_tz)
-            today = now_vn.strftime("%Y-%m-%d")
-            # Gửi từ 7h đến trước 10h (nếu bot restart lúc 7h vẫn bù được, nhưng không gửi trùng nhờ lưu ngày đã gửi)
-            if GREETING_HOUR <= now_vn.hour < GREETING_HOUR + 3 and DAILY_STATE.get("last_sent") != today:
-                with DB_LOCK:
-                    DAILY_STATE["last_sent"] = today
-                    _save_json(DAILY_GREETING_FILE, DAILY_STATE, "daily_greeting")
-                flush_backup()  # lưu ngay lên backup để restart không gửi lại lần 2
-                send_daily_greeting_to_all(now_vn)
-        except Exception as e:
-            logging.error(f"Lỗi gửi lời chúc buổi sáng: {e}")
-        time.sleep(30)
-
-def start_daily_greeting():
-    Thread(target=_daily_greeting_loop, daemon=True).start()
-    logging.info("✅ Đã bật lời chúc tự động 7h sáng mỗi ngày.")
-
 GROUPS_PAGE_1 = [
     {"id": "gr_1", "name": "tay ( ten zin )", "link": "https://www.facebook.com/groups/689086271422497?locale=vi_VN", "mem": 1800000},
     {"id": "gr_2", "name": "Mua Ban Acc Playtogether", "link": "https://www.facebook.com/groups/1438781170008706?locale=vi_VN", "mem": 1700000},
@@ -949,7 +803,6 @@ SMS_PACKAGES = {
     INPUT_PRIVATE_MSG_USER_ID, INPUT_PRIVATE_MSG_PHOTO, INPUT_PRIVATE_MSG_TEXT,
     INPUT_CREATE_BOT_REQUIREMENTS, INPUT_USER_FEEDBACK
 ) = range(14)
-INPUT_BULK_TOPUP = 14  # Trạng thái nhập danh sách cộng tiền hàng loạt
 
 def is_admin(user_id, username):
     return str(user_id) == str(ADMIN_CHAT_ID) or (username and username == ADMIN_USERNAME.replace('@',''))
@@ -1394,97 +1247,6 @@ async def receive_admin_edit_user_handler(update: Update, context: ContextTypes.
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
     )
-    return ConversationHandler.END
-
-async def receive_bulk_topup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin cộng tiền hàng loạt: 'ALL <số tiền>' hoặc nhiều dòng '<ID> <số tiền>'."""
-    user = update.effective_user
-    if not is_admin(user.id, user.username):
-        return ConversationHandler.END
-
-    raw = (update.message.text or "").strip()
-    back_markup = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Danh sách khách", callback_data="admin_list_users")]])
-
-    def _parse_amount(s):
-        return float(s.replace(",", "").replace(".", "")) if re.fullmatch(r"[\d.,]+", s) else float(s)
-
-    jobs = []  # danh sách (user_id, amount)
-    errors = []
-    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-
-    if len(lines) == 1 and lines[0].split()[0].upper() in ("ALL", "TATCA", "TẤT_CẢ") and len(lines[0].split()) >= 2:
-        try:
-            amount = _parse_amount(lines[0].split()[1])
-            if amount <= 0:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("⚠️ Số tiền không hợp lệ! Nhập lại (ví dụ: <code>ALL 10000</code>):", parse_mode="HTML")
-            return INPUT_BULK_TOPUP
-        with DB_LOCK:
-            jobs = [(uid, amount) for uid in list(USERS_DB.keys())]
-    else:
-        for ln in lines:
-            parts = ln.split()
-            if len(parts) < 2:
-                errors.append(ln)
-                continue
-            try:
-                uid = int(parts[0])
-                amount = _parse_amount(parts[1])
-                if amount <= 0:
-                    raise ValueError
-                jobs.append((uid, amount))
-            except ValueError:
-                errors.append(ln)
-
-    if not jobs:
-        await update.message.reply_text(
-            "⚠️ Không có dòng hợp lệ nào! Vui lòng nhập lại theo mẫu:\n<code>ALL 10000</code>\nhoặc\n<code>ID SỐ_TIỀN</code> (mỗi dòng 1 khách)",
-            parse_mode="HTML"
-        )
-        return INPUT_BULK_TOPUP
-
-    results = []
-    with DB_LOCK:
-        for uid, amount in jobs:
-            ud = get_user_data(uid)
-            ud["balance"] += amount
-            ud["history"].append(f"Admin cộng tiền hàng loạt: +{amount:,.0f}đ")
-            results.append((uid, amount, ud["balance"]))
-        save_users_db()
-
-    total = sum(a for _, a, _ in results)
-    summary = (
-        f"✅ <b>CỘNG TIỀN HÀNG LOẠT HOÀN TẤT!</b>\n"
-        f"----------------------------------------\n"
-        f"👥 Số khách được cộng: <code>{len(results)}</code>\n"
-        f"💵 Tổng tiền đã cộng: <code>{total:,.0f}đ</code>"
-    )
-    if errors:
-        bad = "\n".join(html.escape(e) for e in errors[:10])
-        summary += f"\n\n⚠️ <b>{len(errors)} dòng sai định dạng (đã bỏ qua):</b>\n<code>{bad}</code>"
-    await update.message.reply_text(summary, parse_mode="HTML", reply_markup=back_markup)
-
-    # Thông báo cho từng khách (tự xóa sau 30s), lỗi khách chặn bot thì bỏ qua
-    async def _notify_all():
-        for uid, amount, new_bal in results:
-            try:
-                base_text = (
-                    f"🎉 <b>BẠN ĐÃ ĐƯỢC CỘNG TIỀN THÀNH CÔNG!</b>\n\n"
-                    f"💰 <b>Số tiền nạp:</b> +{amount:,.0f} VND\n"
-                    f"💳 <b>Số dư hiện tại:</b> {new_bal:,.0f} VND"
-                )
-                msg = await context.bot.send_message(
-                    chat_id=uid,
-                    text=f"{base_text}\n\n⏱️ <i>Tin nhắn này sẽ tự động xóa sau 30s...</i>",
-                    parse_mode="HTML"
-                )
-                await auto_delete_with_countdown(context, uid, msg.message_id, base_text, 30)
-            except Exception:
-                pass
-            await asyncio.sleep(0.05)
-
-    asyncio.create_task(_notify_all())
     return ConversationHandler.END
 
 async def receive_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2878,27 +2640,9 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
 
         keyboard = [
             [InlineKeyboardButton("✏️ Sửa / Xóa số dư khách", callback_data="admin_prompt_edit_balance")],
-            [InlineKeyboardButton("💰 Cộng tiền hàng loạt", callback_data="admin_bulk_topup")],
             [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-
-    elif data == "admin_bulk_topup":
-        if not is_admin(user.id, user.username):
-            return
-        text = (
-            f"💰 <b>CỘNG TIỀN HÀNG LOẠT</b>\n"
-            f"----------------------------------------\n"
-            f"Gửi tin nhắn theo 1 trong 2 cách:\n\n"
-            f"<b>Cách 1 - Cộng cho TẤT CẢ khách:</b>\n"
-            f"<code>ALL 10000</code>\n\n"
-            f"<b>Cách 2 - Cộng cho từng ID (mỗi dòng 1 khách):</b>\n"
-            f"<code>6900793565 50000\n123456789 20000\n987654321 100000</code>\n\n"
-            f"⚠️ <i>Số tiền phải lớn hơn 0. Khách được cộng sẽ nhận thông báo tự xóa sau 30s.</i>"
-        )
-        keyboard = [[InlineKeyboardButton("↩️ Trở về", callback_data="admin_list_users")]]
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-        return INPUT_BULK_TOPUP
 
     elif data == "admin_prompt_edit_balance":
         if not is_admin(user.id, user.username):
@@ -3328,7 +3072,6 @@ def main():
     global bot_app
     start_backup_worker()
     keep_alive()
-    start_daily_greeting()
 
     application = (
         ApplicationBuilder()
@@ -3366,7 +3109,6 @@ def main():
             INPUT_PRIVATE_MSG_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_private_msg_text_handler)],
             INPUT_CREATE_BOT_REQUIREMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_bot_requirements_handler)],
             INPUT_USER_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_feedback_handler)],
-            INPUT_BULK_TOPUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_bulk_topup_handler)],
         },
         fallbacks=[
             CommandHandler("start", start),
