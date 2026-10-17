@@ -150,9 +150,9 @@ def sepay_webhook():
             return jsonify({"status": "error", "message": "No data"}), 400
 
         auth_header = request.headers.get("Authorization", "")
-sepay_acc = identify_sepay_account(auth_header)
-if sepay_acc is None:
-    return jsonify({"status": "error", "message": "Unauthorized"}), 401
+        sepay_acc = identify_sepay_account(auth_header)
+        if sepay_acc is None:
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
 
         transfer_amount = float(data.get("transferAmount", 0))
         content = str(data.get("content", ""))
