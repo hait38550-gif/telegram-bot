@@ -88,11 +88,14 @@ def send_auto_delete_message(chat_id, base_text, seconds=30):
 # ==================== TÍNH NĂNG TỰ ĐỘNG CỘNG TIỀN QUA SEPAY ====================
 SEPAY_API_KEY = os.getenv("SEPAY_API_KEY", "")
 
-def notify_sepay_topup_sync(user_id, amount, new_balance, tx_id):
+def notify_sepay_topup_sync(user_id, amount, new_balance, tx_id, bonus=0):
     """Thông báo nạp tiền tự động cho Khách (tự xóa sau 30s) & Admin."""
+    bonus_user = f"🎁 <b>Khuyến mãi:</b> <code>+{bonus:,.0f} VNĐ</code>\n" if bonus > 0 else ""
+    bonus_admin = f"🎁 <b>Khuyến mãi:</b> +{bonus:,.0f} VNĐ\n" if bonus > 0 else ""
     user_text = (
         f"🎉 <b>NẠP TIỀN TỰ ĐỘNG THÀNH CÔNG (SEPAY)!</b>\n\n"
         f"💵 <b>Số tiền nạp:</b> <code>+{amount:,.0f} VNĐ</code>\n"
+        f"{bonus_user}"
         f"💳 <b>Số dư mới:</b> <code>{new_balance:,.0f} VNĐ</code>\n"
         f"🆔 <b>Mã giao dịch:</b> <code>#{tx_id}</code>\n\n"
         f"⚡ <i>Cảm ơn bạn đã sử dụng dịch vụ!</i>"
@@ -107,6 +110,7 @@ def notify_sepay_topup_sync(user_id, amount, new_balance, tx_id):
                 f"----------------------------------------\n"
                 f"👤 <b>Khách hàng ID:</b> <code>{user_id}</code>\n"
                 f"💵 <b>Cộng tiền:</b> +{amount:,.0f} VNĐ\n"
+                f"{bonus_admin}"
                 f"💰 <b>Số dư mới:</b> {new_balance:,.0f} VNĐ\n"
                 f"🆔 <b>Mã GD SePay:</b> #{tx_id}"
             )
@@ -142,6 +146,7 @@ def sepay_webhook():
                 return jsonify({"status": "success", "message": "Duplicate transaction ignored"}), 200
 
             target_user_id = None
+            bonus = 0.0
             for uid_str in matched_ids:
                 uid = int(uid_str)
                 if uid in USERS_DB:
@@ -150,8 +155,12 @@ def sepay_webhook():
 
             if target_user_id:
                 user_data = get_user_data(target_user_id)
-                user_data["balance"] += transfer_amount
-                user_data["history"].append(f"Nạp tiền tự động (SePay #{transaction_id}): +{transfer_amount:,.0f}đ")
+                bonus = calc_bonus(transfer_amount)
+                user_data["balance"] += transfer_amount + bonus
+                hist = f"Nạp tiền tự động (SePay #{transaction_id}): +{transfer_amount:,.0f}đ"
+                if bonus > 0:
+                    hist += f" | Khuyến mãi {get_promo_percent():g}%: +{bonus:,.0f}đ"
+                user_data["history"].append(hist)
                 save_users_db()
                 new_balance = user_data["balance"]
                 if tx_key:
@@ -160,7 +169,7 @@ def sepay_webhook():
         if target_user_id:
             Thread(
                 target=notify_sepay_topup_sync,
-                args=(target_user_id, transfer_amount, new_balance, transaction_id),
+                args=(target_user_id, transfer_amount, new_balance, transaction_id, bonus),
                 daemon=True
             ).start()
             return jsonify({"status": "success", "message": f"Topup {transfer_amount} for user {target_user_id}"}), 200
@@ -205,11 +214,12 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "YourAdminUsername")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_ADMIN_CHAT_ID")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
-BANK_INFO = {
-    "bank_name": "MBBank",
-    "account_no": "3030777777",
-    "account_name": "NGUYEN TIEN DAT"
-}
+# Danh sách tài khoản ngân hàng nhận tiền (khách chọn 1 trong các STK khi nạp)
+BANK_ACCOUNTS = [
+    {"bank_name": "MBBank", "account_no": "3030777777", "account_name": "NGUYEN TIEN DAT"},
+    {"bank_name": "MBBank", "account_no": "308088888", "account_name": "NGUYEN TIEN DAT"},
+]
+BANK_INFO = BANK_ACCOUNTS[0]  # giữ lại để tương thích code cũ
 
 # ==================== LƯU TRỮ DỮ LIỆU BỀN VỮNG ====================
 # DB_DIR: thư mục lưu file dữ liệu. Nếu dùng Render Persistent Disk, đặt DB_DIR=/data
@@ -223,6 +233,7 @@ DB_FILE = os.path.join(DB_DIR, "users_db.json")
 GITCODE_DB_FILE = os.path.join(DB_DIR, "gitcode_db.json")
 SMS_DB_FILE = os.path.join(DB_DIR, "sms_db.json")
 SEPAY_TX_FILE = os.path.join(DB_DIR, "sepay_tx.json")
+PROMO_FILE = os.path.join(DB_DIR, "promo_db.json")
 
 # Backup tự động lên một repo GitHub RIÊNG (private) để không mất dữ liệu khi Render chạy lại.
 # Biến môi trường: BACKUP_GITHUB_TOKEN, BACKUP_GITHUB_REPO (dạng user/repo), BACKUP_GITHUB_BRANCH (mặc định main)
@@ -346,7 +357,7 @@ def atomic_json_dump(path, obj):
 SMM_SERVICES_FIXED = {
     # --- FACEBOOK ---
     "fb_mc_6683_1": 6683,
-    "fb_mc_6682_2": 6682,
+    "fb_mc_6631_2": 6631,
     "fb_mc_6683_3": 6683,
     "fb_mc_6683_4": 6683,
     "fb_mc_6444_1": 6444,
@@ -510,6 +521,29 @@ SMS_DB = load_sms_db()
 _tx_data = _load_json(SEPAY_TX_FILE, {})
 PROCESSED_TX = _tx_data if isinstance(_tx_data, dict) else {}
 
+# ==================== KHUYẾN MÃI NẠP TIỀN (ADMIN CÀI ĐẶT) ====================
+_promo_data = _load_json(PROMO_FILE, {})
+PROMO_DB = _promo_data if isinstance(_promo_data, dict) else {}
+
+def get_promo_percent():
+    try:
+        pct = float(PROMO_DB.get("percent", 0))
+    except Exception:
+        pct = 0.0
+    return pct if pct > 0 else 0.0
+
+def set_promo_percent(pct):
+    with DB_LOCK:
+        PROMO_DB["percent"] = float(pct)
+        _save_json(PROMO_FILE, PROMO_DB, "promo")
+
+def calc_bonus(amount):
+    """Tiền thưởng khuyến mãi = % x số tiền khách nạp."""
+    pct = get_promo_percent()
+    if pct <= 0:
+        return 0.0
+    return float(round(float(amount) * pct / 100))
+
 def mark_tx_processed(tx_key):
     with DB_LOCK:
         PROCESSED_TX[tx_key] = int(time.time())
@@ -610,7 +644,7 @@ SERVICES = {
         "title": "👍 TĂNG LIKE BÀI VIẾT",
         "items": [
             {"id": "fb_mc_6683_1", "name": "✨ S1 Like clone xịn", "price": 99.0},
-            {"id": "fb_mc_6682_2", "name": "👆 S1 Like bấm tay vn   buff 100 trở lên", "price": 130.4},
+            {"id": "fb_mc_6631_2", "name": "👆 S1 Like bấm tay vn   buff 100 trở lên", "price": 130.4},
             {"id": "fb_mc_6683_3", "name": "🛡️ S2 Like post dự phòng", "price": 110.35},
             {"id": "fb_mc_6683_4", "name": "⚡ S2 Like clone nhanh", "price": 90.0},
         ]
@@ -801,8 +835,67 @@ SMS_PACKAGES = {
     INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE, 
     INPUT_BROADCAST_PHOTO, INPUT_BROADCAST_TEXT, 
     INPUT_PRIVATE_MSG_USER_ID, INPUT_PRIVATE_MSG_PHOTO, INPUT_PRIVATE_MSG_TEXT,
-    INPUT_CREATE_BOT_REQUIREMENTS, INPUT_USER_FEEDBACK
-) = range(14)
+    INPUT_CREATE_BOT_REQUIREMENTS, INPUT_USER_FEEDBACK, INPUT_PROMO_PERCENT
+) = range(15)
+
+# Các dịch vụ bình luận: KHÔNG chạy tự động, gửi đơn về Admin để chạy tay
+MANUAL_ORDER_CATS = ("fb_cmt", "tt_cmt")
+
+def build_bank_choice(amount):
+    """Màn hình cho khách chọn 1 trong các STK để chuyển khoản."""
+    pct = get_promo_percent()
+    promo_text = ""
+    if pct > 0:
+        bonus = calc_bonus(amount)
+        promo_text = (
+            f"🎉 <b>HÔM NAY KHUYẾN MÃI NẠP +{pct:g}%</b>\n"
+            f"🎁 Nạp <code>{amount:,.0f}đ</code> nhận thêm <code>+{bonus:,.0f}đ</code> "
+            f"(tổng <code>{amount + bonus:,.0f}đ</code>)\n\n"
+        )
+    text = (
+        f"🏦 <b>CHỌN TÀI KHOẢN NGÂN HÀNG</b>\n"
+        f"════════════════════════════════\n"
+        f"{promo_text}"
+        f"💵 <b>Số tiền nạp:</b> <code>{amount:,.0f} VNĐ</code>\n\n"
+        f"👇 <i>Vui lòng chọn số tài khoản bạn muốn chuyển khoản:</i>"
+    )
+    keyboard = []
+    for i, b in enumerate(BANK_ACCOUNTS):
+        keyboard.append([InlineKeyboardButton(f"🏦 {b['bank_name']} - {b['account_no']}", callback_data=f"bank:{i}:{int(amount)}")])
+    keyboard.append([InlineKeyboardButton("🔄 Chọn Lại Mệnh Giá", callback_data="nap_tien")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+def build_topup_qr(user_id, amount, bank_idx):
+    """Tạo link QR + nội dung chuyển khoản (có hiển thị khuyến mãi nếu admin đang bật)."""
+    if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
+        bank_idx = 0
+    bank = BANK_ACCOUNTS[bank_idx]
+    qr_url = (
+        f"https://img.vietqr.io/image/{bank['bank_name']}-{bank['account_no']}-compact2.png"
+        f"?amount={int(amount)}&addInfo={user_id}&accountName={bank['account_name'].replace(' ', '%20')}"
+    )
+    pct = get_promo_percent()
+    promo_text = ""
+    if pct > 0:
+        bonus = calc_bonus(amount)
+        promo_text = (
+            f"🎉 <b>HÔM NAY KHUYẾN MÃI NẠP +{pct:g}%</b>\n"
+            f"🎁 Thưởng thêm: <code>+{bonus:,.0f} VNĐ</code>\n"
+            f"💰 Tổng nhận được: <code>{amount + bonus:,.0f} VNĐ</code>\n"
+            f"────────────────────────\n"
+        )
+    caption = (
+        f"💳 <b>THÔNG TIN CHUYỂN KHOẢN NẠP TIỀN</b>\n"
+        f"════════════════════════════════\n"
+        f"{promo_text}"
+        f"🏦 <b>Ngân hàng:</b> <code>{bank['bank_name']}</code>\n"
+        f"🔢 <b>STK:</b> <code>{bank['account_no']}</code>\n"
+        f"👤 <b>Chủ TK:</b> <code>{bank['account_name']}</code>\n"
+        f"💵 <b>Số tiền:</b> <code>{amount:,.0f} VNĐ</code>\n"
+        f"📝 <b>Nội dung ck (BẮT BUỘC):</b> <code>{user_id}</code>\n\n"
+        f"⚠️ <i>LƯU Ý: Vui lòng chuyển chính xác nội dung ID <code>{user_id}</code> để hệ thống cộng tiền tự động!</i>"
+    )
+    return qr_url, caption
 
 def is_admin(user_id, username):
     return str(user_id) == str(ADMIN_CHAT_ID) or (username and username == ADMIN_USERNAME.replace('@',''))
@@ -1116,24 +1209,34 @@ async def custom_topup_input_handler(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("⚠️ Số tiền không hợp lệ! Vui lòng nhập lại số tiền (Ví dụ: 100000):")
         return INPUT_TOPUP_AMOUNT
 
+    text_out, markup = build_bank_choice(amount)
+    await update.message.reply_text(text_out, parse_mode="HTML", reply_markup=markup)
+    return ConversationHandler.END
+
+async def receive_promo_percent_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    qr_url = f"https://img.vietqr.io/image/{BANK_INFO['bank_name']}-{BANK_INFO['account_no']}-compact2.png?amount={int(amount)}&addInfo={user.id}&accountName={BANK_INFO['account_name'].replace(' ', '%20')}"
-    
-    caption_text = (
-        f"💳 <b>THÔNG TIN CHUYỂN KHOẢN NẠP TIỀN</b>\n"
-        f"════════════════════════════════\n"
-        f"🏦 <b>Ngân hàng:</b> <code>{BANK_INFO['bank_name']}</code>\n"
-        f"🔢 <b>STK:</b> <code>{BANK_INFO['account_no']}</code>\n"
-        f"👤 <b>Chủ TK:</b> <code>{BANK_INFO['account_name']}</code>\n"
-        f"💵 <b>Số tiền:</b> <code>{amount:,.0f} VNĐ</code>\n"
-        f"📝 <b>Nội dung ck (BẮT BUỘC):</b> <code>{user.id}</code>\n\n"
-        f"⚠️ <i>LƯU Ý: Vui lòng chuyển chính xác nội dung ID <code>{user.id}</code> để hệ thống cộng tiền tự động!</i>"
+    if not is_admin(user.id, user.username):
+        return ConversationHandler.END
+
+    raw = update.message.text.strip().replace("%", "").replace(",", ".")
+    try:
+        pct = float(raw)
+        if pct < 0 or pct > 100:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("⚠️ Phần trăm không hợp lệ! Nhập số từ 0 đến 100 (ví dụ: 10):")
+        return INPUT_PROMO_PERCENT
+
+    set_promo_percent(pct)
+    status = f"🟢 Đang bật khuyến mãi <b>+{pct:g}%</b>" if pct > 0 else "🔴 Đã tắt khuyến mãi"
+    await update.message.reply_text(
+        f"✅ <b>ĐÃ CẬP NHẬT KHUYẾN MÃI NẠP</b>\n\n{status}",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎉 Cài đặt khuyến mãi", callback_data="admin_promo_menu")],
+            [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]
+        ])
     )
-    keyboard = [
-        [InlineKeyboardButton("✅ Đã Chuyển Khoản", callback_data=f"confirm_trans:{amount}")],
-        [InlineKeyboardButton("🔄 Chọn Mệnh Giá Khác", callback_data="nap_tien")]
-    ]
-    await update.message.reply_photo(photo=qr_url, caption=caption_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     return ConversationHandler.END
 
 async def receive_gitcode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1436,6 +1539,64 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     save_users_db()
     
     new_bal = user_data["balance"]
+
+    # ================= ĐƠN BÌNH LUẬN: GỬI VỀ ADMIN CHẠY TAY =================
+    cat_key_now = context.user_data.get("current_cat_key", "")
+    if cat_key_now in MANUAL_ORDER_CATS:
+        user_mention = get_user_mention(user)
+        admin_notice = (
+            f"💬 <b>ĐƠN BÌNH LUẬN MỚI - CẦN CHẠY TAY!</b>\n"
+            f"----------------------------------------\n"
+            f"👤 Khách hàng: {user_mention} (ID: <code>{user.id}</code>)\n"
+            f"📦 Gói: {html.escape(str(selected_item.get('name')))}\n"
+            f"🆔 Mã dịch vụ SMM: <code>{get_smm_service_id(item_id_str) or 'N/A'}</code>\n"
+            f"💬 Loại cmt: {html.escape(str(cmt_type))}\n"
+            f"🔗 Link: <code>{html.escape(str(link))}</code>\n"
+            f"📊 Số lượng: {quantity:,}\n"
+            f"💵 Khách đã thanh toán: {total_price:,.0f}đ\n\n"
+            f"⏳ <b>STATUS: CHỜ ADMIN XỬ LÝ</b>"
+        )
+        admin_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Đã chạy xong", callback_data=f"admin_cmt_done:{user.id}")],
+            [InlineKeyboardButton("❌ Từ chối & hoàn tiền", callback_data=f"admin_cmt_refund:{user.id}:{int(round(total_price))}")]
+        ])
+        try:
+            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
+        except Exception as e:
+            # Không gửi được cho Admin -> hoàn tiền khách để không mất đơn
+            logging.error(f"❌ Không gửi được đơn cmt cho Admin: {e}")
+            with DB_LOCK:
+                user_data["balance"] += total_price
+                user_data["history"].append(f"Hoàn tiền đơn cmt lỗi: {selected_item.get('name')} | +{total_price:,.0f}đ")
+            save_users_db()
+            fail_text = (
+                f"❌ <b>ĐẶT ĐƠN THẤT BẠI!</b>\n\n"
+                f"💵 Đã hoàn lại <code>{total_price:,.0f}đ</code> vào số dư.\n"
+                f"⚠️ <i>Vui lòng thử lại sau hoặc liên hệ Admin.</i>"
+            )
+            fail_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+            if update.callback_query:
+                await update.callback_query.edit_message_text(fail_text, reply_markup=fail_markup, parse_mode="HTML")
+            else:
+                await update.message.reply_text(fail_text, reply_markup=fail_markup, parse_mode="HTML")
+            return ConversationHandler.END
+
+        success_text = (
+            f"🎉 <b>ĐẶT ĐƠN BÌNH LUẬN THÀNH CÔNG!</b>\n\n"
+            f"📦 <b>Gói:</b> {html.escape(str(selected_item.get('name')))}\n"
+            f"💬 <b>Loại:</b> {html.escape(str(cmt_type))}\n"
+            f"🔗 <b>Link:</b> <code>{html.escape(str(link))}</code>\n"
+            f"📊 <b>Số lượng:</b> <code>{quantity:,}</code>\n"
+            f"💵 <b>Thanh toán:</b> <code>{total_price:,.0f}đ</code>\n"
+            f"💳 <b>Số dư còn lại:</b> <code>{new_bal:,.0f}đ</code>\n\n"
+            f"⏳ <i>Đơn bình luận đã được chuyển cho Admin xử lý thủ công. Bạn sẽ nhận thông báo khi hoàn thành.</i>"
+        )
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+        if update.callback_query:
+            await update.callback_query.edit_message_text(success_text, reply_markup=reply_markup, parse_mode="HTML")
+        else:
+            await update.message.reply_text(success_text, reply_markup=reply_markup, parse_mode="HTML")
+        return ConversationHandler.END
 
     # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN =================
     smm_service_id = get_smm_service_id(item_id_str) or 6683
@@ -2386,11 +2547,112 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("👥 Danh sách Khách & Số Dư", callback_data="admin_list_users")],
             [InlineKeyboardButton("🎁 Tạo & Quản lý Gitcode", callback_data="admin_gitcode_menu")],
             [InlineKeyboardButton("📱 Xem các gói SMS đang chạy", callback_data="admin_sms_list_all")],
+            [InlineKeyboardButton("🎉 Cài Đặt Khuyến Mãi Nạp", callback_data="admin_promo_menu")],
             [InlineKeyboardButton("📢 Tạo Thông Báo Broadcast", callback_data="admin_broadcast_menu")],
             [InlineKeyboardButton("👤 Gửi Thông Báo Riêng (Cá Nhân)", callback_data="admin_private_msg_menu")],
             [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
         ]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "admin_promo_menu" or data.startswith("set_promo:"):
+        if not is_admin(user.id, user.username):
+            return
+        if data.startswith("set_promo:"):
+            set_promo_percent(float(data.split(":")[1]))
+        pct = get_promo_percent()
+        status = f"🟢 Đang bật: <b>+{pct:g}%</b> trên số tiền khách nạp" if pct > 0 else "🔴 Đang tắt"
+        text = (
+            f"🎉 <b>CÀI ĐẶT KHUYẾN MÃI NẠP TIỀN</b>\n"
+            f"----------------------------------------\n"
+            f"📌 <b>Trạng thái:</b> {status}\n\n"
+            f"ℹ️ Khi bật, mã QR của khách sẽ hiện khuyến mãi và khách nạp bao nhiêu sẽ được cộng thêm đúng % đó.\n\n"
+            f"👇 <i>Chọn nhanh mức khuyến mãi hoặc nhập tùy ý:</i>"
+        )
+        keyboard = [
+            [InlineKeyboardButton("5%", callback_data="set_promo:5"), InlineKeyboardButton("10%", callback_data="set_promo:10"), InlineKeyboardButton("20%", callback_data="set_promo:20")],
+            [InlineKeyboardButton("30%", callback_data="set_promo:30"), InlineKeyboardButton("50%", callback_data="set_promo:50"), InlineKeyboardButton("100%", callback_data="set_promo:100")],
+            [InlineKeyboardButton("✍️ Nhập % tùy ý", callback_data="promo_custom")],
+            [InlineKeyboardButton("🚫 Tắt khuyến mãi", callback_data="set_promo:0")],
+            [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]
+        ]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "promo_custom":
+        if not is_admin(user.id, user.username):
+            return
+        text = (
+            f"✍️ <b>NHẬP % KHUYẾN MÃI NẠP</b>\n"
+            f"----------------------------------------\n"
+            f"💬 Nhắn số phần trăm (0 - 100). Ví dụ: <code>15</code>\n"
+            f"<i>Nhập 0 để tắt khuyến mãi.</i>"
+        )
+        keyboard = [[InlineKeyboardButton("↩️ Trở về", callback_data="admin_promo_menu")]]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        return INPUT_PROMO_PERCENT
+
+    elif data.startswith("admin_cmt_done:"):
+        if not is_admin(user.id, user.username):
+            return
+        done_msgs = context.bot_data.setdefault("done_msgs", set())
+        msg_key = (query.message.chat_id, query.message.message_id)
+        if msg_key in done_msgs:
+            return
+        done_msgs.add(msg_key)
+        target_uid = int(data.split(":")[1])
+        try:
+            await query.edit_message_text(
+                f"{query.message.text_html}\n\n✅ <b>ADMIN ĐÃ CHẠY XONG ĐƠN</b>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟢 ĐÃ HOÀN THÀNH", callback_data="none")]])
+            )
+        except BadRequest:
+            pass
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text="✅ <b>Đơn bình luận của bạn đã được Admin chạy xong!</b> Cảm ơn bạn đã sử dụng dịch vụ.",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    elif data.startswith("admin_cmt_refund:"):
+        if not is_admin(user.id, user.username):
+            return
+        done_msgs = context.bot_data.setdefault("done_msgs", set())
+        msg_key = (query.message.chat_id, query.message.message_id)
+        if msg_key in done_msgs:
+            return
+        done_msgs.add(msg_key)
+        _, uid_str, amt_str = data.split(":")
+        target_uid, refund_amt = int(uid_str), float(amt_str)
+        with DB_LOCK:
+            target_data = get_user_data(target_uid)
+            target_data["balance"] += refund_amt
+            target_data["history"].append(f"Hoàn tiền đơn cmt bị từ chối: +{refund_amt:,.0f}đ")
+            save_users_db()
+            new_bal = target_data["balance"]
+        try:
+            await query.edit_message_text(
+                f"{query.message.text_html}\n\n❌ <b>ĐÃ TỪ CHỐI - HOÀN {refund_amt:,.0f}đ CHO KHÁCH</b>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔴 ĐÃ HOÀN TIỀN", callback_data="none")]])
+            )
+        except BadRequest:
+            pass
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=(
+                    f"❌ <b>Đơn bình luận của bạn đã bị Admin từ chối.</b>\n"
+                    f"💵 Đã hoàn lại <code>{refund_amt:,.0f}đ</code> vào số dư.\n"
+                    f"💳 Số dư hiện tại: <code>{new_bal:,.0f}đ</code>\n"
+                    f"Liên hệ Admin {html.escape(ADMIN_USERNAME)} để được hỗ trợ."
+                ),
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
 
     elif data == "admin_private_msg_menu":
         if not is_admin(user.id, user.username):
@@ -2839,22 +3101,26 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
 
     elif data.startswith("amount:"):
         amount = int(data.split(":")[1])
-        qr_url = f"https://img.vietqr.io/image/{BANK_INFO['bank_name']}-{BANK_INFO['account_no']}-compact2.png?amount={amount}&addInfo={user.id}&accountName={BANK_INFO['account_name'].replace(' ', '%20')}"
-        text = (
-            f"💳 <b>THÔNG TIN CHUYỂN KHOẢN NẠP TIỀN</b>\n"
-            f"════════════════════════════════\n"
-            f"🏦 <b>Ngân hàng:</b> <code>{BANK_INFO['bank_name']}</code>\n"
-            f"🔢 <b>STK:</b> <code>{BANK_INFO['account_no']}</code>\n"
-            f"👤 <b>Chủ TK:</b> <code>{BANK_INFO['account_name']}</code>\n"
-            f"💵 <b>Số tiền:</b> <code>{amount:,.0f} VNĐ</code>\n"
-            f"📝 <b>Nội dung ck (BẮT BUỘC):</b> <code>{user.id}</code>\n\n"
-            f"⚠️ <i>LƯU Ý: Vui lòng chuyển chính xác nội dung ID <code>{user.id}</code> để hệ thống cộng tiền tự động!</i>"
-        )
+        text, markup = build_bank_choice(amount)
+        if query.message.photo:
+            await query.message.delete()
+            await context.bot.send_message(chat_id=user.id, text=text, parse_mode="HTML", reply_markup=markup)
+        else:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+
+    elif data.startswith("bank:"):
+        _, idx_str, amount_str = data.split(":")
+        bank_idx, amount = int(idx_str), int(amount_str)
+        qr_url, text = build_topup_qr(user.id, amount, bank_idx)
         keyboard = [
             [InlineKeyboardButton("✅ Đã Chuyển Khoản", callback_data=f"confirm_trans:{amount}")],
+            [InlineKeyboardButton("🏦 Đổi Số Tài Khoản", callback_data=f"amount:{amount}")],
             [InlineKeyboardButton("🔄 Chọn Lại Mệnh Giá", callback_data="nap_tien")]
         ]
-        await query.message.delete()
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
         await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("confirm_trans:"):
@@ -2893,7 +3159,12 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         _, target_id_str, amount_str = data.split(":")
         target_id, amount = int(target_id_str), float(amount_str)
         user_data = get_user_data(target_id)
-        user_data["balance"] += amount
+        bonus = calc_bonus(amount)
+        user_data["balance"] += amount + bonus
+        hist = f"Nạp tiền (Admin duyệt): +{amount:,.0f}đ"
+        if bonus > 0:
+            hist += f" | Khuyến mãi {get_promo_percent():g}%: +{bonus:,.0f}đ"
+        user_data["history"].append(hist)
         save_users_db() 
         
         new_bal = user_data["balance"]
@@ -2904,12 +3175,14 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             user_tag = f"ID <code>{target_id}</code>"
 
-        admin_base_text = f"✅ Đã cộng {amount:,.0f}đ cho khách {user_tag}"
+        bonus_admin = f" (+{bonus:,.0f}đ khuyến mãi)" if bonus > 0 else ""
+        admin_base_text = f"✅ Đã cộng {amount:,.0f}đ{bonus_admin} cho khách {user_tag}"
         await query.edit_message_text(f"{admin_base_text}\n\n⏱️ <i>Tin nhắn này sẽ tự động xóa sau 30s...</i>", parse_mode="HTML")
         await auto_delete_with_countdown(context, query.message.chat_id, query.message.message_id, admin_base_text, 30)
 
         try:
-            user_base_text = f"🎉 <b>BẠN ĐÃ ĐƯỢC CỘNG TIỀN THÀNH CÔNG!</b>\n\n💰 <b>Số tiền nạp:</b> +{amount:,.0f} VND\n💳 <b>Số dư hiện tại:</b> {new_bal:,.0f} VND"
+            bonus_line = f"🎁 <b>Khuyến mãi:</b> +{bonus:,.0f} VND\n" if bonus > 0 else ""
+            user_base_text = f"🎉 <b>BẠN ĐÃ ĐƯỢC CỘNG TIỀN THÀNH CÔNG!</b>\n\n💰 <b>Số tiền nạp:</b> +{amount:,.0f} VND\n{bonus_line}💳 <b>Số dư hiện tại:</b> {new_bal:,.0f} VND"
             user_notify = await context.bot.send_message(
                 chat_id=target_id,
                 text=f"{user_base_text}\n\n⏱️ <i>Tin nhắn này sẽ tự động xóa sau 30s...</i>",
@@ -3109,6 +3382,7 @@ def main():
             INPUT_PRIVATE_MSG_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_private_msg_text_handler)],
             INPUT_CREATE_BOT_REQUIREMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_bot_requirements_handler)],
             INPUT_USER_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_feedback_handler)],
+            INPUT_PROMO_PERCENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_promo_percent_handler)],
         },
         fallbacks=[
             CommandHandler("start", start),
