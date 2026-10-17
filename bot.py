@@ -86,7 +86,31 @@ def send_auto_delete_message(chat_id, base_text, seconds=30):
     return False
 
 # ==================== TÍNH NĂNG TỰ ĐỘNG CỘNG TIỀN QUA SEPAY ====================
-SEPAY_API_KEY = os.getenv("SEPAY_API_KEY", "")
+import hmac
+
+# Hỗ trợ 2 tài khoản SePay (mỗi ngân hàng 1 tài khoản SePay riêng)
+SEPAY_API_KEYS = {
+    "1": os.getenv("SEPAY_API_KEY_1", "").strip(),
+    "2": os.getenv("SEPAY_API_KEY_2", "").strip(),
+}
+# Vẫn hỗ trợ biến cũ SEPAY_API_KEY nếu bạn còn dùng
+_legacy_key = os.getenv("SEPAY_API_KEY", "").strip()
+if _legacy_key and _legacy_key not in SEPAY_API_KEYS.values():
+    SEPAY_API_KEYS["0"] = _legacy_key
+SEPAY_API_KEYS = {k: v for k, v in SEPAY_API_KEYS.items() if v}
+
+def identify_sepay_account(auth_header):
+    """Trả về '1' / '2' / '0' nếu key khớp, None nếu sai key.
+    Nếu chưa cấu hình key nào thì cho qua (trả 'none') giống code cũ."""
+    if not SEPAY_API_KEYS:
+        return "none"
+    token = (auth_header or "").strip()
+    if token.lower().startswith("apikey "):
+        token = token[7:].strip()
+    for name, key in SEPAY_API_KEYS.items():
+        if hmac.compare_digest(token.encode(), key.encode()):
+            return name
+    return None
 
 def notify_sepay_topup_sync(user_id, amount, new_balance, tx_id, bonus=0):
     """Thông báo nạp tiền tự động cho Khách (tự xóa sau 30s) & Admin."""
@@ -126,8 +150,9 @@ def sepay_webhook():
             return jsonify({"status": "error", "message": "No data"}), 400
 
         auth_header = request.headers.get("Authorization", "")
-        if SEPAY_API_KEY and f"Apikey {SEPAY_API_KEY}" not in auth_header:
-            return jsonify({"status": "error", "message": "Unauthorized"}), 401
+sepay_acc = identify_sepay_account(auth_header)
+if sepay_acc is None:
+    return jsonify({"status": "error", "message": "Unauthorized"}), 401
 
         transfer_amount = float(data.get("transferAmount", 0))
         content = str(data.get("content", ""))
@@ -137,7 +162,7 @@ def sepay_webhook():
         if transfer_type != "in" or transfer_amount <= 0:
             return jsonify({"status": "success", "message": "Ignored out transaction"}), 200
 
-        tx_key = str(transaction_id) if transaction_id not in ("", None) else None
+        tx_key = f"{sepay_acc}:{transaction_id}" if transaction_id not in ("", None) else None
         matched_ids = re.findall(r'(?<!\d)\d{6,12}(?!\d)', content)
 
         with DB_LOCK:
