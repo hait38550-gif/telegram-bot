@@ -151,7 +151,12 @@ def sepay_webhook():
 
         auth_header = request.headers.get("Authorization", "")
         sepay_acc = identify_sepay_account(auth_header)
+        logging.info(
+            f"📥 SePay webhook nhận: acc={data.get('accountNumber')} | type={data.get('transferType')} | "
+            f"amount={data.get('transferAmount')} | content={data.get('content')!r} | key_khop={sepay_acc}"
+        )
         if sepay_acc is None:
+            logging.warning("⛔ SePay webhook bị từ chối 401: API Key trên SePay KHÔNG khớp biến SEPAY_API_KEY_1/2 trên Render.")
             return jsonify({"status": "error", "message": "Unauthorized"}), 401
 
         transfer_amount = float(data.get("transferAmount", 0))
@@ -233,7 +238,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
     level=logging.INFO
 )
-logging.getLogger("httpx").setLevel(logging.INFO)
+# Không log URL request của httpx vì URL chứa BOT_TOKEN
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "YourAdminUsername")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_ADMIN_CHAT_ID")
