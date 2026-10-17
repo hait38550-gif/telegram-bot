@@ -380,7 +380,7 @@ def start_backup_worker():
 def atomic_json_dump(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=4)
+        json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
     os.replace(tmp, path)
 
 
@@ -502,9 +502,9 @@ def _load_json(path, default):
                 pass
     return default
 
-def _save_json(path, obj, label):
+def _write_json_now(path, obj, label):
     with DB_LOCK:
-        for _ in range(3):
+        for _ in range(5):
             try:
                 atomic_json_dump(path, obj)
                 mark_dirty(path)
@@ -514,6 +514,39 @@ def _save_json(path, obj, label):
             except Exception as e:
                 logging.error(f"Lỗi khi lưu database {label}: {e}")
                 return
+
+# Lưu file chạy ở luồng nền để bot không bị khựng khi nhiều người dùng cùng lúc.
+# Nhiều lần gọi lưu liên tiếp được gộp thành 1 lần ghi (trễ tối đa ~0.3 giây).
+_SAVE_PENDING = {}
+_SAVE_PENDING_LOCK = threading.Lock()
+_SAVE_EVENT = threading.Event()
+
+def _save_json(path, obj, label):
+    with _SAVE_PENDING_LOCK:
+        _SAVE_PENDING[path] = (obj, label)
+    _SAVE_EVENT.set()
+
+def flush_saves():
+    """Ghi ngay tất cả dữ liệu đang chờ (gọi khi tắt bot)."""
+    with _SAVE_PENDING_LOCK:
+        items = list(_SAVE_PENDING.items())
+        _SAVE_PENDING.clear()
+    for path, (obj, label) in items:
+        _write_json_now(path, obj, label)
+
+def _save_worker():
+    while True:
+        _SAVE_EVENT.wait()
+        time.sleep(0.3)
+        _SAVE_EVENT.clear()
+        try:
+            flush_saves()
+        except Exception as e:
+            logging.error(f"Lỗi luồng lưu dữ liệu: {e}")
+
+Thread(target=_save_worker, daemon=True).start()
+import atexit
+atexit.register(flush_saves)
 
 def load_users_db():
     data = _load_json(DB_FILE, {})
@@ -1641,8 +1674,24 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     if "like" in item_id_str:
         payload_data["comments"] = "👍, ❤️, 😆"
 
+    # Báo khách biết bot đang xử lý (API có thể chậm vài giây)
+    processing_msg = None
+    try:
+        if update.callback_query:
+            await update.callback_query.edit_message_text("⏳ <b>Đang xử lý đơn hàng, vui lòng chờ vài giây...</b>", parse_mode="HTML")
+        elif update.message:
+            processing_msg = await update.message.reply_text("⏳ <b>Đang xử lý đơn hàng, vui lòng chờ vài giây...</b>", parse_mode="HTML")
+    except Exception:
+        pass
+
     # Chạy trong thread riêng để bot không bị đứng khi API chậm
     smm_res = await asyncio.to_thread(call_smm_api, "add", payload_data)
+
+    if processing_msg:
+        try:
+            await processing_msg.delete()
+        except Exception:
+            pass
 
     smm_order_id = None
     if smm_res and isinstance(smm_res, dict) and "order" in smm_res:
@@ -3148,11 +3197,11 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🏦 Đổi Số Tài Khoản", callback_data=f"amount:{amount}")],
             [InlineKeyboardButton("🔄 Chọn Lại Mệnh Giá", callback_data="nap_tien")]
         ]
+        await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         try:
             await query.message.delete()
         except Exception:
             pass
-        await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("confirm_trans:"):
         amount = float(data.split(":")[1])
@@ -3317,7 +3366,7 @@ ALERT_PREFIXES = (
     "sms_cancel:", "sms_renew:", "admin_sms_cancel:", "admin_sms_renew:",
     "delete_gc:", "group_detail_", "buy_group_now:", "admin_panel", "subcat_",
 )
-CLICK_COOLDOWN = 0.35
+CLICK_COOLDOWN = 0.2
 _LAST_CLICK = {}
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3383,6 +3432,9 @@ def main():
         .concurrent_updates(True)      # xử lý nhiều người cùng lúc, không xếp hàng
         .connection_pool_size(64)
         .pool_timeout(15)
+        .connect_timeout(15)
+        .read_timeout(20)
+        .write_timeout(20)
         .build()
     )
     bot_app = application
@@ -3428,6 +3480,7 @@ def main():
 
     print("🤖 Bot đang chạy...")
     application.run_polling(drop_pending_updates=True)
+    flush_saves()   # ghi nốt dữ liệu đang chờ xuống file
     flush_backup()  # đẩy dữ liệu lên backup lần cuối khi bị tắt (SIGTERM)
 
 if __name__ == "__main__":
