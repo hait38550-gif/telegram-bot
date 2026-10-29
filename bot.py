@@ -14,8 +14,8 @@ import io
 from threading import Thread
 from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.request import HTTPXRequest
 from telegram.error import BadRequest
-from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
