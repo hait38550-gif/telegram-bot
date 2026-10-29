@@ -14,7 +14,6 @@ import io
 from threading import Thread
 from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.request import HTTPXRequest
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -26,6 +25,7 @@ from telegram.ext import (
     ConversationHandler,
     filters,
 )
+
 # Biến toàn cục cho Bot Application (giữ lại để tương thích)
 bot_app = None
 
@@ -713,7 +713,7 @@ def _write_json_now(path, obj, label):
                 return
 
 # Lưu file chạy ở luồng nền để bot không bị khựng khi nhiều người dùng cùng lúc.
-# Nhiều lần gọi liên tiếp được gộp thành 1 lần ghi (trễ tối đa ~0.3 giây).
+# Nhiều lần gọi lưu liên tiếp được gộp thành 1 lần ghi (trễ tối đa ~0.3 giây).
 _SAVE_PENDING = {}
 _SAVE_PENDING_LOCK = threading.Lock()
 _SAVE_EVENT = threading.Event()
@@ -1232,14 +1232,10 @@ def build_topup_qr(user_id, amount, bank_idx):
     if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
         bank_idx = 0
     bank = BANK_ACCOUNTS[bank_idx]
-    
-    # 💡 TỐI ƯU HÓA QR & CHỐNG ĐƠ KHI KHÁCH ẤN VÀO: Mã hóa đúng chuẩn URL VietQR
-    account_name_clean = bank['account_name'].replace(' ', '%20')
     qr_url = (
         f"https://img.vietqr.io/image/{bank['bank_name']}-{bank['account_no']}-compact2.png"
-        f"?amount={int(amount)}&addInfo={user_id}&accountName={account_name_clean}"
+        f"?amount={int(amount)}&addInfo={user_id}&accountName={bank['account_name'].replace(' ', '%20')}"
     )
-    
     pct = get_promo_percent()
     promo_text = ""
     if pct > 0:
@@ -1877,7 +1873,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Lấy giá của 1 đơn vị từ cấu hình gói dịch vụ đã chọn
     price_per_unit = float(selected_item.get("price", 0))
     
-    # Lấy đơn giá nhân chính xác với số lượng khách nhập
+    # 💡 SỬA LỖI TÍNH TIỀN: Lấy đơn giá nhân chính xác với số lượng khách nhập
     total_price = float(quantity) * price_per_unit
     
     user_data = get_user_data(user.id)
@@ -3558,7 +3554,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         if query.message.photo or query.message.video:
             await query.message.delete()
-            await context.bot.send_message(chat_id=user.id, text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -3576,76 +3572,44 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
     elif data.startswith("bank:"):
-        # Khách chọn STK -> gửi QR + thông tin CK + nút mở thẳng app ngân hàng (đúng STK đã chọn)
         _, idx_str, amount_str = data.split(":")
         bank_idx, amount = int(idx_str), int(amount_str)
-        if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
-            bank_idx = 0
         qr_url, text = build_topup_qr(user.id, amount, bank_idx)
-        app_link = build_bank_app_link(user.id, amount, bank_idx)
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🏦 Mở App Ngân Hàng Chuyển Khoản", url=app_link)],
-            [InlineKeyboardButton("🔁 Đổi Số Tài Khoản", callback_data=f"amount:{amount}")],
+        keyboard = [
+            [InlineKeyboardButton("✅ Đã Chuyển Khoản", callback_data=f"confirm_trans:{amount}")],
+            [InlineKeyboardButton("🏦 Đổi Số Tài Khoản", callback_data=f"amount:{amount}")],
             [InlineKeyboardButton("🔄 Chọn Lại Mệnh Giá", callback_data="nap_tien")]
-        ])
-
-        # Báo ngay cho khách biết bot đang tạo QR
+        ]
+        await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         try:
-            await query.edit_message_text("⏳ <b>Đang tạo mã QR, vui lòng chờ vài giây...</b>", parse_mode="HTML")
+            await query.message.delete()
         except Exception:
             pass
 
-        sent = False
-        # Cách 1: bot tự vẽ QR (nhanh, không phụ thuộc mạng ngoài)
-        qr_bytes = make_local_qr(BANK_ACCOUNTS[bank_idx], amount, str(user.id))
-        # Cách 2: chưa cài thư viện qrcode -> tải ảnh QR từ VietQR về server
-        if not qr_bytes:
-            qr_bytes = await asyncio.to_thread(fetch_qr_bytes, qr_url)
-        if qr_bytes:
-            try:
-                await context.bot.send_photo(chat_id=user.id, photo=qr_bytes, caption=text, parse_mode="HTML", reply_markup=markup)
-                sent = True
-            except Exception as e:
-                logging.error(f"❌ Gửi ảnh QR (bytes) cho {user.id} lỗi: {e}")
+    elif data.startswith("confirm_trans:"):
+        amount = float(data.split(":")[1])
+        await query.edit_message_caption(
+            caption=f"⏳ Đã gửi yêu cầu nạp <code>{amount:,.0f} VNĐ</code>. Hệ thống đang xử lý duyệt tiền...",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Trở Về Menu", callback_data="menu_main")]])
+        )
+        user_mention = get_user_mention(user)
 
-        # Cách 3: nhờ Telegram tự tải link QR
-        if not sent:
-            try:
-                await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=text, parse_mode="HTML", reply_markup=markup)
-                sent = True
-            except Exception as e:
-                logging.error(f"❌ Gửi ảnh QR (URL) cho {user.id} lỗi: {e}")
-
-        # Cách 4: không có ảnh vẫn gửi đủ STK + nội dung chuyển khoản dạng chữ
-        if not sent:
-            try:
-                await context.bot.send_message(
-                    chat_id=user.id,
-                    text=text,
-                    parse_mode="HTML",
-                    reply_markup=markup
-                )
-                sent = True
-            except Exception as e:
-                logging.error(f"❌ Gửi thông tin CK dạng chữ cho {user.id} lỗi: {e}")
-
-        if sent:
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
-        else:
-            try:
-                await query.edit_message_text(
-                    "❌ <b>Không tạo được thông tin chuyển khoản!</b>\n⚠️ <i>Vui lòng thử lại hoặc liên hệ Admin.</i>",
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Thử Lại", callback_data=f"bank:{bank_idx}:{amount}")],
-                        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
-                    ])
-                )
-            except Exception:
-                pass
+        admin_notice = (
+            f"🔔 <b>YÊU CẦU NẠP TIỀN MỚI!</b>\n"
+            f"----------------------------------------\n"
+            f"👤 Khách: {user_mention} (ID: <code>{user.id}</code>)\n"
+            f"💵 Số tiền: <code>{amount:,.0f} VNĐ</code>\n"
+            f"📝 Nội dung CK: <code>{user.id}</code>"
+        )
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"✅ Duyệt cộng {amount:,.0f}đ", callback_data=f"admin_approve_topup:{user.id}:{amount}")],
+            [InlineKeyboardButton("❌ Chưa nhận được tiền", callback_data=f"admin_reject_topup:{user.id}:{amount}")]
+        ])
+        try:
+            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML", reply_markup=btn)
+        except Exception:
+            pass
 
     elif data.startswith("admin_approve_topup:"):
         if not is_admin(user.id, user.username):
@@ -3837,16 +3801,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         return
     logging.error("Lỗi không bắt được trong bot:", exc_info=err)
 
-    # Khách bấm nút mà bot lỗi -> báo cho khách biết thay vì im lặng (cảm giác bị đơ)
-    try:
-        if isinstance(update, Update) and update.callback_query and err_name not in ("NetworkError", "TimedOut"):
-            await context.bot.send_message(
-                chat_id=update.callback_query.from_user.id,
-                text="⚠️ Có lỗi khi xử lý yêu cầu của bạn. Vui lòng thử lại hoặc gõ /start để mở lại menu."
-            )
-    except Exception:
-        pass
-
 async def admin_restore_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin gửi file backup_*.zip cho bot -> khôi phục toàn bộ dữ liệu."""
     user = update.effective_user
@@ -3877,19 +3831,15 @@ def main():
     start_tg_backup_worker()
     keep_alive()
 
-    request_cfg = HTTPXRequest(
-        connection_pool_size=64,
-        pool_timeout=15,
-        connect_timeout=15,
-        read_timeout=20,
-        write_timeout=20,
-    )
-
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .request(request_cfg)
         .concurrent_updates(True)      # xử lý nhiều người cùng lúc, không xếp hàng
+        .connection_pool_size(64)
+        .pool_timeout(15)
+        .connect_timeout(15)
+        .read_timeout(20)
+        .write_timeout(20)
         .build()
     )
     bot_app = application
@@ -3941,4 +3891,4 @@ def main():
     flush_backup()  # đẩy dữ liệu lên backup lần cuối khi bị tắt (SIGTERM)
 
 if __name__ == "__main__":
-    main()
+ main()
