@@ -1260,89 +1260,63 @@ def build_topup_qr(user_id, amount, bank_idx):
     )
     return qr_url, caption
 
+BUILD_TAG = "qr-v6"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
+BANK_BINS = {"MBBank": "970422", "MB": "970422"}   # mã BIN ngân hàng (vietqr.io nhận cả tên và BIN)
+
 def build_qr_urls(user_id, amount, bank_idx):
-    """Danh sách link ảnh QR (thử lần lượt, link nào tải được thì dùng)."""
+    """Các link ảnh QR của vietqr.io (cùng một QR, khác kiểu khung) - thử lần lượt link nào Telegram nhận."""
     if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
         bank_idx = 0
     bank = BANK_ACCOUNTS[bank_idx]
+    bin_id = BANK_BINS.get(bank["bank_name"], bank["bank_name"])
     name_q = urllib.parse.quote(bank["account_name"])
+    tail = f"?amount={int(amount)}&addInfo={user_id}&accountName={name_q}"
+    base = "https://img.vietqr.io/image/"
     return [
-        f"https://img.vietqr.io/image/{bank['bank_name']}-{bank['account_no']}-compact2.png"
-        f"?amount={int(amount)}&addInfo={user_id}&accountName={name_q}",
-        f"https://qr.sepay.vn/img?acc={bank['account_no']}&bank={bank['bank_name']}"
-        f"&amount={int(amount)}&des={user_id}",
+        f"{base}{bank['bank_name']}-{bank['account_no']}-compact2.png{tail}",   # giống bản cũ
+        f"{base}{bin_id}-{bank['account_no']}-compact2.png{tail}",              # dùng mã BIN
+        f"{base}{bin_id}-{bank['account_no']}-qr_only.png{tail}",               # chỉ có mã QR, ảnh nhỏ nhẹ
     ]
 
-BUILD_TAG = "qr-v4"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
+def _is_png_or_jpeg(b):
+    return bool(b) and (b[:8] == b"\x89PNG\r\n\x1a\n" or b[:2] == b"\xff\xd8")
 
-# Tạo QR ngay trong bot (không phụ thuộc vietqr.io / Telegram tải link). Cần thư viện: segno
-BANK_BINS = {"MBBank": "970422", "MB": "970422"}   # mã BIN ngân hàng theo chuẩn NAPAS
+def _describe_image(b):
+    """Mô tả ngắn để ghi log: loại ảnh, kích thước, dung lượng."""
+    if b[:8] == b"\x89PNG\r\n\x1a\n" and len(b) >= 24:
+        return f"PNG {int.from_bytes(b[16:20], 'big')}x{int.from_bytes(b[20:24], 'big')} {len(b)}B"
+    if b[:2] == b"\xff\xd8":
+        return f"JPEG {len(b)}B"
+    return f"KHÔNG PHẢI PNG/JPEG {len(b)}B đầu={b[:24]!r}"
 
-def _tlv(tag, value):
-    return f"{tag}{len(value):02d}{value}"
-
-def _crc16_ccitt(text):
-    crc = 0xFFFF
-    for b in text.encode():
-        crc ^= b << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)
-            crc &= 0xFFFF
-    return f"{crc:04X}"
-
-def build_vietqr_payload(bank, amount, content):
-    """Chuỗi VietQR (NAPAS 247) chuyển tới đúng số tài khoản, đúng số tiền và nội dung."""
-    bin_code = BANK_BINS.get(bank["bank_name"])
-    if not bin_code:
-        return None
-    consumer = _tlv("00", bin_code) + _tlv("01", str(bank["account_no"]))
-    merchant = _tlv("00", "A000000727") + _tlv("01", consumer) + _tlv("02", "QRIBFTTA")
-    payload = (
-        _tlv("00", "01") + _tlv("01", "12") + _tlv("38", merchant)
-        + _tlv("53", "704") + _tlv("54", str(int(amount))) + _tlv("58", "VN")
-        + _tlv("62", _tlv("08", str(content)))
-        + "6304"
-    )
-    return payload + _crc16_ccitt(payload)
-
-def make_local_qr_png(user_id, amount, bank_idx):
-    """Vẽ ảnh QR tại chỗ bằng thư viện segno (thuần Python, không cần Pillow).
-    Trả bytes PNG, hoặc None nếu lỗi."""
-    if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
-        bank_idx = 0
-    payload = build_vietqr_payload(BANK_ACCOUNTS[bank_idx], amount, user_id)
-    if not payload:
-        logging.warning("QR: ngân hàng chưa có mã BIN trong BANK_BINS, không tạo được QR tại chỗ")
-        return None
+def fetch_qr_image(url, timeout=8):
+    """Bot tự tải ảnh QR từ vietqr.io (chạy ở luồng riêng). Trả bytes PNG/JPEG hợp lệ, hoặc None."""
     try:
-        import segno
-        buf = io.BytesIO()
-        segno.make(payload, error="m", micro=False).save(buf, kind="png", scale=10, border=3)
-        return buf.getvalue()
+        r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+        ctype = r.headers.get("Content-Type", "")
+        if r.status_code == 200 and _is_png_or_jpeg(r.content):
+            return r.content
+        logging.warning(f"QR: vietqr không trả ảnh hợp lệ HTTP {r.status_code} ({ctype}) {_describe_image(r.content)}: {url[:75]}")
     except Exception as e:
-        logging.warning(f"QR: không tạo được QR tại chỗ ({type(e).__name__}: {e}) - kiểm tra requirements.txt đã có segno chưa")
-        return None
-
-def download_qr_image(urls, total_timeout=14):
-    """Bot tự tải ảnh QR (chạy ở luồng riêng) thay vì để Telegram tự tải link.
-    Trả về bytes ảnh, hoặc None nếu mọi link đều lỗi/quá chậm."""
-    deadline = time.time() + total_timeout
-    for url in urls:
-        left = deadline - time.time()
-        if left <= 1:
-            break
-        try:
-            r = requests.get(url, timeout=min(7, left), headers={"User-Agent": "Mozilla/5.0"})
-            ctype = r.headers.get("Content-Type", "")
-            if r.status_code == 200 and r.content and ctype.startswith("image/"):
-                return r.content
-            logging.warning(f"QR: link trả về HTTP {r.status_code} ({ctype}): {url[:80]}")
-        except Exception as e:
-            logging.warning(f"QR: không tải được {url[:80]}: {e}")
+        logging.warning(f"QR: không tải được từ vietqr ({type(e).__name__}: {e}): {url[:75]}")
     return None
 
+def reencode_png(img):
+    """Chuẩn hoá lại ảnh (PNG RGB thường) bằng Pillow nếu có - dùng khi Telegram không đọc được ảnh gốc."""
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(img))
+        im.load()
+        out = io.BytesIO()
+        im.convert("RGB").save(out, format="PNG")
+        return out.getvalue()
+    except Exception as e:
+        logging.warning(f"QR: không chuẩn hoá lại được ảnh ({type(e).__name__}: {e})")
+        return None
+
 async def send_topup_qr(query, context, user, amount, bank_idx):
-    """Gửi QR nạp tiền. Luôn có phản hồi cho khách: ảnh QR -> (thử link trực tiếp) -> tin nhắn chữ."""
+    """Gửi QR VietQR nạp tiền. Luôn có phản hồi cho khách.
+    Thử lần lượt từng kiểu ảnh vietqr: gửi ảnh -> (chuẩn hoá lại ảnh) -> Telegram tự tải link -> gửi dạng file -> chữ."""
     qr_url, caption = build_topup_qr(user.id, amount, bank_idx)
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Đã Chuyển Khoản", callback_data=f"confirm_trans:{amount}")],
@@ -1356,35 +1330,63 @@ async def send_topup_qr(query, context, user, amount, bank_idx):
     except Exception:
         pass
 
+    async def send_photo_bytes(data):
+        await context.bot.send_photo(
+            chat_id=user.id, photo=InputFile(io.BytesIO(data), filename="qr.png"),
+            caption=caption, parse_mode="HTML", reply_markup=markup
+        )
+
     sent = False
-    source = "link"
-    img = await asyncio.to_thread(download_qr_image, build_qr_urls(user.id, amount, bank_idx))
-    if not img:
-        source = "local"
-        img = await asyncio.to_thread(make_local_qr_png, user.id, amount, bank_idx)
-    if img:
+    first_img = None
+    deadline = time.time() + 30
+    for n, url in enumerate(build_qr_urls(user.id, amount, bank_idx), 1):
+        if time.time() > deadline:
+            break
+        img = await asyncio.to_thread(fetch_qr_image, url)
+        if not img:
+            continue
+        first_img = first_img or img
         try:
-            await context.bot.send_photo(
-                chat_id=user.id, photo=InputFile(io.BytesIO(img), filename="qr.png"),
-                caption=caption, parse_mode="HTML", reply_markup=markup
-            )
+            await send_photo_bytes(img)
             sent = True
-            logging.info(f"✅ QR gửi OK cho {user.id} (nguồn: {source})")
+            logging.info(f"✅ QR vietqr gửi OK cho {user.id} (kiểu ảnh #{n}, {_describe_image(img)})")
+            break
         except Exception as e:
-            logging.error(f"❌ Gửi ảnh QR (file) lỗi: {e}")
+            logging.error(f"❌ Telegram từ chối ảnh vietqr #{n} ({_describe_image(img)}): {e}")
+        fixed = await asyncio.to_thread(reencode_png, img)
+        if fixed:
+            try:
+                await send_photo_bytes(fixed)
+                sent = True
+                logging.info(f"✅ QR vietqr gửi OK cho {user.id} (kiểu ảnh #{n}, đã chuẩn hoá lại)")
+                break
+            except Exception as e:
+                logging.error(f"❌ Telegram vẫn từ chối ảnh #{n} sau khi chuẩn hoá: {e}")
 
     if not sent:
-        # Cách cuối cho ảnh: để Telegram tự tải link
+        # Cách khác: để Telegram tự tải link vietqr
         try:
             await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=caption, parse_mode="HTML", reply_markup=markup)
             sent = True
-            logging.info(f"✅ QR gửi OK cho {user.id} (Telegram tự tải link)")
+            logging.info(f"✅ QR vietqr gửi OK cho {user.id} (Telegram tự tải link)")
         except Exception as e:
             logging.error(f"❌ Gửi ảnh QR (link) lỗi: {e}")
 
+    if not sent and first_img:
+        # Gửi dạng file đính kèm: Telegram không xử lý ảnh nên không bị lỗi Image_process_failed
+        try:
+            await context.bot.send_document(
+                chat_id=user.id, document=InputFile(io.BytesIO(first_img), filename="qr_nap_tien.png"),
+                caption=caption, parse_mode="HTML", reply_markup=markup
+            )
+            sent = True
+            logging.info(f"✅ QR vietqr gửi OK cho {user.id} (dạng file)")
+        except Exception as e:
+            logging.error(f"❌ Gửi QR dạng file lỗi: {e}")
+
     if not sent:
-        # Không tạo được ảnh -> vẫn gửi thông tin chuyển khoản dạng chữ để khách không bị kẹt
-        logging.error(f"❌ Không có ảnh QR cho {user.id}: tải link lỗi, tạo tại chỗ lỗi (thiếu segno?), Telegram tải link lỗi -> gửi dạng chữ")
+        # Không gửi được ảnh -> vẫn gửi thông tin chuyển khoản dạng chữ để khách không bị kẹt
+        logging.error(f"❌ Không gửi được ảnh QR vietqr nào cho {user.id} -> gửi dạng chữ")
         try:
             await context.bot.send_message(
                 chat_id=user.id,
