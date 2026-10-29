@@ -11,12 +11,10 @@ import sys
 import threading
 import zipfile
 import io
-from urllib.parse import quote
 from threading import Thread
 from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
-from telegram.request import HTTPXRequest
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -46,8 +44,12 @@ def home():
 # nên gửi thông báo bằng HTTP trực tiếp tới Telegram để luôn gửi được.
 def tg_call(method, payload):
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
-        return requests.post(url, json=payload, timeout=15).json()
+        r = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
+            json=payload,
+            timeout=15
+        )
+        return r.json()
     except Exception as e:
         logging.error(f"❌ Lỗi gọi Telegram API ({method}): {e}")
         return None
@@ -246,12 +248,9 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_ADMIN_CHAT_ID")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
 # Danh sách tài khoản ngân hàng nhận tiền (khách chọn 1 trong các STK khi nạp)
-# bank_id  : mã BIN Napas (dùng để tự vẽ QR và tạo link VietQR)
-# app_code : mã app ngân hàng cho link mở thẳng app (dl.vietqr.io)
-# bank_code: mã ngân hàng đi kèm STK trong link mở app
 BANK_ACCOUNTS = [
-    {"bank_name": "MBBank", "bank_id": "970422", "app_code": "mb", "bank_code": "mbbank", "account_no": "3030777777", "account_name": "NGUYEN TIEN DAT"},
-    {"bank_name": "MBBank", "bank_id": "970422", "app_code": "mb", "bank_code": "mbbank", "account_no": "308088888", "account_name": "NGUYEN TIEN DAT"},
+    {"bank_name": "MBBank", "account_no": "3030777777", "account_name": "NGUYEN TIEN DAT"},
+    {"bank_name": "MBBank", "account_no": "308088888", "account_name": "NGUYEN TIEN DAT"},
 ]
 BANK_INFO = BANK_ACCOUNTS[0]  # giữ lại để tương thích code cũ
 
@@ -714,7 +713,7 @@ def _write_json_now(path, obj, label):
                 return
 
 # Lưu file chạy ở luồng nền để bot không bị khựng khi nhiều người dùng cùng lúc.
-# Nhiều lần gọi lưu liên tiếp được gộp thành 1 lần ghi (trễ tối đa ~0.3 giây).
+# Nhiều lần gọi liên tiếp được gộp thành 1 lần ghi (trễ tối đa ~0.3 giây).
 _SAVE_PENDING = {}
 _SAVE_PENDING_LOCK = threading.Lock()
 _SAVE_EVENT = threading.Event()
@@ -1233,11 +1232,14 @@ def build_topup_qr(user_id, amount, bank_idx):
     if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
         bank_idx = 0
     bank = BANK_ACCOUNTS[bank_idx]
-    bank_id = bank.get("bank_id") or bank["bank_name"]
+    
+    # 💡 TỐI ƯU HÓA QR & CHỐNG ĐƠ KHI KHÁCH ẤN VÀO: Mã hóa đúng chuẩn URL VietQR
+    account_name_clean = bank['account_name'].replace(' ', '%20')
     qr_url = (
-        f"https://img.vietqr.io/image/{bank_id}-{bank['account_no']}-compact2.png"
-        f"?amount={int(amount)}&addInfo={user_id}&accountName={bank['account_name'].replace(' ', '%20')}"
+        f"https://img.vietqr.io/image/{bank['bank_name']}-{bank['account_no']}-compact2.png"
+        f"?amount={int(amount)}&addInfo={user_id}&accountName={account_name_clean}"
     )
+    
     pct = get_promo_percent()
     promo_text = ""
     if pct > 0:
@@ -1260,73 +1262,6 @@ def build_topup_qr(user_id, amount, bank_idx):
         f"⚠️ <i>LƯU Ý: Vui lòng chuyển chính xác nội dung ID <code>{user_id}</code> để hệ thống cộng tiền tự động!</i>"
     )
     return qr_url, caption
-
-def build_bank_app_link(user_id, amount, bank_idx):
-    """Link mở thẳng app ngân hàng, tự điền sẵn STK + số tiền + nội dung (đúng STK khách đã chọn)."""
-    if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
-        bank_idx = 0
-    bank = BANK_ACCOUNTS[bank_idx]
-    app_code = bank.get("app_code", "mb")
-    bank_code = bank.get("bank_code", "mbbank")
-    ba = quote(f"{bank['account_no']}@{bank_code}", safe="@")
-    return (
-        f"https://dl.vietqr.io/pay?app={app_code}&ba={ba}"
-        f"&am={int(amount)}&tn={quote(str(user_id))}"
-        f"&bn={quote(bank['account_name'])}"
-    )
-
-# ---- Tự vẽ mã VietQR (chuẩn Napas) ngay trong bot, không phụ thuộc web ngoài ----
-def _crc16_ccitt(s):
-    crc = 0xFFFF
-    for ch in s.encode():
-        crc ^= ch << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)
-            crc &= 0xFFFF
-    return f"{crc:04X}"
-
-def _tlv(tag, val):
-    return f"{tag}{len(val):02d}{val}"
-
-def make_local_qr(bank, amount, desc):
-    """Tạo ảnh QR VietQR bằng thư viện qrcode. Trả về bytes PNG, hoặc None nếu lỗi/chưa cài thư viện."""
-    try:
-        import qrcode
-        bin_id = str(bank.get("bank_id", "970422"))
-        member = _tlv("00", bin_id) + _tlv("01", bank["account_no"])
-        merchant = _tlv("00", "A000000727") + _tlv("01", member) + _tlv("02", "QRIBFTTA")
-        payload = (
-            _tlv("00", "01") + _tlv("01", "12") + _tlv("38", merchant)
-            + _tlv("53", "704") + _tlv("54", str(int(amount)))
-            + _tlv("58", "VN") + _tlv("62", _tlv("08", str(desc)))
-            + "6304"
-        )
-        payload += _crc16_ccitt(payload)
-        qr = qrcode.QRCode(box_size=10, border=4)
-        qr.add_data(payload)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-    except Exception as e:
-        logging.error(f"❌ Tạo QR nội bộ lỗi: {e}")
-        return None
-
-def fetch_qr_bytes(qr_url, tries=3):
-    """Tải ảnh QR từ VietQR về server rồi mới gửi cho khách (dự phòng khi không tự vẽ được)."""
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0)"}
-    for i in range(tries):
-        try:
-            r = requests.get(qr_url, headers=headers, timeout=10)
-            ctype = (r.headers.get("Content-Type") or "").lower()
-            if r.status_code == 200 and ctype.startswith("image") and len(r.content) > 500:
-                return r.content
-            logging.warning(f"QR lần {i + 1}: HTTP {r.status_code} | {ctype} | {len(r.content)}B")
-        except Exception as e:
-            logging.warning(f"QR lần {i + 1} lỗi: {e}")
-        time.sleep(1)
-    return None
 
 def is_admin(user_id, username):
     return str(user_id) == str(ADMIN_CHAT_ID) or (username and username == ADMIN_USERNAME.replace('@',''))
@@ -1942,7 +1877,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Lấy giá của 1 đơn vị từ cấu hình gói dịch vụ đã chọn
     price_per_unit = float(selected_item.get("price", 0))
     
-    # 💡 SỬA LỖI TÍNH TIỀN: Lấy đơn giá nhân chính xác với số lượng khách nhập
+    # Lấy đơn giá nhân chính xác với số lượng khách nhập
     total_price = float(quantity) * price_per_unit
     
     user_data = get_user_data(user.id)
@@ -2716,7 +2651,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
 
         user_mention = get_user_mention(user)
         admin_notice = (
-            f"🔔 <b>CÓ ĐƠN ĐĂNG KÝ TÍCH XANH MỚI!</b>\n"
+            f"🔔 <b>CÓ ĐƠN ĐĂNG KÝ TÍCH XANH MỚI!</b>\
             f"----------------------------------------\n"
             f"👤 Khách: {user_mention} (ID: <code>{user.id}</code>)\n"
             f"📦 Gói: {name}\n"
