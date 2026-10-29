@@ -13,14 +13,16 @@ import zipfile
 import io
 from threading import Thread
 from flask import Flask, request, jsonify
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
 from telegram.error import BadRequest
+from telegram.request import HTTPXRequest
 from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    ExtBot,
     MessageHandler,
     ConversationHandler,
     filters,
@@ -39,17 +41,153 @@ app = Flask('')
 def home():
     return "Bot SMM & Mua Tài Khoản is running and alive!"
 
+# ==================== EMOJI ĐỘNG CỦA TELEGRAM (CUSTOM EMOJI) ====================
+# Cách hoạt động: bot tự đổi mọi emoji thường trong tin nhắn / nút bấm thành emoji động
+# dựa trên bảng EMOJI_MAP (emoji thường -> custom_emoji_id). Bảng này Admin nạp bằng lệnh
+# /emojipack <link bộ emoji> hoặc gửi tin nhắn chỉ gồm emoji động cho bot.
+# Nếu bot không đủ điều kiện hiển thị emoji động thì Telegram tự hiện emoji thường -> không lỗi.
+EMOJI_MAP = {}            # {"👍": "5368324170671202286", ...} (đã bỏ ký tự FE0F)
+_EMOJI_RE = [None]
+ANIM_BUTTONS = [os.getenv("ANIM_BUTTONS", "1") != "0"]   # bật/tắt icon động trên nút bấm
+
+def _norm_emoji(s):
+    return (s or "").replace("\ufe0f", "").replace("\ufe0e", "").strip()
+
+def rebuild_emoji_regex():
+    keys = sorted(EMOJI_MAP.keys(), key=len, reverse=True)
+    if keys:
+        _EMOJI_RE[0] = re.compile("(" + "|".join(re.escape(k) for k in keys) + ")\ufe0f?")
+    else:
+        _EMOJI_RE[0] = None
+
+_TAG_RE = re.compile(r"(<[^>]*>)")
+
+def animate_html(text):
+    """Đổi emoji thường trong chuỗi HTML thành <tg-emoji> (bỏ qua trong <code>/<pre>/thuộc tính thẻ)."""
+    rx = _EMOJI_RE[0]
+    if not text or rx is None:
+        return text
+
+    def _sub(m):
+        eid = EMOJI_MAP.get(_norm_emoji(m.group(1)))
+        if not eid:
+            return m.group(0)
+        return f'<tg-emoji emoji-id="{eid}">{m.group(1)}</tg-emoji>'
+
+    out, skip = [], 0
+    for part in _TAG_RE.split(text):
+        if not part:
+            continue
+        if _TAG_RE.fullmatch(part):
+            low = part.lower()
+            if low.startswith("<code") or low.startswith("<pre") or low.startswith("<tg-emoji"):
+                skip += 1
+            elif low.startswith("</code") or low.startswith("</pre") or low.startswith("</tg-emoji"):
+                skip = max(0, skip - 1)
+            out.append(part)
+        else:
+            out.append(part if skip else rx.sub(_sub, part))
+    return "".join(out)
+
+def animate_markup(markup):
+    """Gắn icon emoji động vào đầu nút bấm (Bot API 9.4: icon_custom_emoji_id)."""
+    rx = _EMOJI_RE[0]
+    if rx is None or not isinstance(markup, InlineKeyboardMarkup):
+        return markup
+    rows, changed = [], False
+    for row in markup.inline_keyboard:
+        new_row = []
+        for b in row:
+            t = b.text or ""
+            m = rx.match(t)
+            if m:
+                eid = EMOJI_MAP.get(_norm_emoji(m.group(1)))
+                rest = t[m.end():].lstrip()
+                if eid and rest:
+                    new_row.append(InlineKeyboardButton(
+                        text=rest,
+                        callback_data=b.callback_data,
+                        url=b.url,
+                        api_kwargs={"icon_custom_emoji_id": eid},
+                    ))
+                    changed = True
+                    continue
+            new_row.append(b)
+        rows.append(new_row)
+    return InlineKeyboardMarkup(rows) if changed else markup
+
+def _anim_kwargs(kw, buttons=True):
+    kw = dict(kw)
+    pm = kw.get("parse_mode")
+    if pm is not None and str(pm).upper() == "HTML":
+        for k in ("text", "caption"):
+            if isinstance(kw.get(k), str):
+                kw[k] = animate_html(kw[k])
+    rm = kw.get("reply_markup")
+    if buttons and isinstance(rm, InlineKeyboardMarkup):
+        kw["reply_markup"] = animate_markup(rm)
+    return kw
+
+class AnimBot(ExtBot):
+    """Bot tự động chuyển emoji thường -> emoji động cho mọi tin nhắn gửi/sửa."""
+
+    async def _anim(self, name, names, args, kwargs):
+        parent = getattr(super(), name)
+        if len(args) > len(names):
+            return await parent(*args, **kwargs)
+        for n, v in zip(names, args):
+            kwargs[n] = v
+        if not EMOJI_MAP:
+            return await parent(**kwargs)
+        use_btn = ANIM_BUTTONS[0]
+        try:
+            return await parent(**_anim_kwargs(kwargs, use_btn))
+        except BadRequest as e:
+            low = str(e).lower()
+            if use_btn and ("icon" in low or "emoji" in low):
+                # Bot không được phép dùng icon động trên nút -> tắt tính năng này, gửi lại bình thường
+                ANIM_BUTTONS[0] = False
+                logging.warning(f"⚠️ Tắt icon động trên nút bấm vì Telegram từ chối: {e}")
+                return await parent(**_anim_kwargs(kwargs, False))
+            if "entit" in low or "parse" in low:
+                logging.warning(f"⚠️ Emoji động bị từ chối, gửi lại bản thường: {e}")
+                return await parent(**kwargs)
+            raise
+
+    async def send_message(self, *args, **kwargs):
+        return await self._anim("send_message", ("chat_id", "text"), args, kwargs)
+
+    async def edit_message_text(self, *args, **kwargs):
+        return await self._anim("edit_message_text", ("text",), args, kwargs)
+
+    async def send_photo(self, *args, **kwargs):
+        return await self._anim("send_photo", ("chat_id", "photo"), args, kwargs)
+
+    async def send_video(self, *args, **kwargs):
+        return await self._anim("send_video", ("chat_id", "video"), args, kwargs)
+
+    async def edit_message_caption(self, *args, **kwargs):
+        return await self._anim("edit_message_caption", (), args, kwargs)
+
 # ==================== GỌI TELEGRAM API ĐỒNG BỘ (DÙNG CHO WEBHOOK) ====================
 # Webhook chạy ở luồng Flask riêng, không dùng chung event loop với bot,
 # nên gửi thông báo bằng HTTP trực tiếp tới Telegram để luôn gửi được.
 def tg_call(method, payload):
     try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
-            json=payload,
-            timeout=15
-        )
-        return r.json()
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+        p = payload
+        if (
+            EMOJI_MAP
+            and method in ("sendMessage", "editMessageText")
+            and str(payload.get("parse_mode", "")).upper() == "HTML"
+            and isinstance(payload.get("text"), str)
+        ):
+            p = dict(payload)
+            p["text"] = animate_html(payload["text"])
+        res = requests.post(url, json=p, timeout=15).json()
+        if p is not payload and not res.get("ok") and "entit" in str(res.get("description", "")).lower():
+            res = requests.post(url, json=payload, timeout=15).json()
+        return res
     except Exception as e:
         logging.error(f"❌ Lỗi gọi Telegram API ({method}): {e}")
         return None
@@ -267,6 +405,7 @@ GITCODE_DB_FILE = os.path.join(DB_DIR, "gitcode_db.json")
 SMS_DB_FILE = os.path.join(DB_DIR, "sms_db.json")
 SEPAY_TX_FILE = os.path.join(DB_DIR, "sepay_tx.json")
 PROMO_FILE = os.path.join(DB_DIR, "promo_db.json")
+EMOJI_FILE = os.path.join(DB_DIR, "emoji_db.json")
 
 # ==================== AUTO_BACKUP LÊN TELEGRAM ====================
 # Gửi file zip chứa toàn bộ dữ liệu cho Admin và GHIM lại. Khi Render chạy lại sẽ tự khôi phục từ tin ghim.
@@ -281,7 +420,7 @@ _TG_SEND_LOCK = threading.Lock()
 _TG_RESTORED = False
 
 def _tg_files():
-    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE]
+    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE, EMOJI_FILE]
 
 def _tg_ready():
     return bool(TG_BACKUP_ENABLED and TG_BACKUP_CHAT_ID and TG_BACKUP_CHAT_ID != "YOUR_ADMIN_CHAT_ID"
@@ -402,6 +541,9 @@ def restore_from_zip_bytes(raw, missing_only=False):
                 PROCESSED_TX.clear(); PROCESSED_TX.update(obj)
             elif base == os.path.basename(PROMO_FILE):
                 PROMO_DB.clear(); PROMO_DB.update(obj)
+            elif base == os.path.basename(EMOJI_FILE):
+                EMOJI_MAP.clear(); EMOJI_MAP.update({str(k): str(v) for k, v in obj.items()})
+                rebuild_emoji_regex()
             mark_dirty(path)
     if not restored:
         return True, "Không có file nào cần khôi phục"
@@ -785,6 +927,15 @@ PROCESSED_TX = _tx_data if isinstance(_tx_data, dict) else {}
 # ==================== KHUYẾN MÃI NẠP TIỀN (ADMIN CÀI ĐẶT) ====================
 _promo_data = _load_json(PROMO_FILE, {})
 PROMO_DB = _promo_data if isinstance(_promo_data, dict) else {}
+
+# ==================== BẢNG EMOJI ĐỘNG (NẠP TỪ FILE) ====================
+_emoji_data = _load_json(EMOJI_FILE, {})
+if isinstance(_emoji_data, dict):
+    EMOJI_MAP.update({str(k): str(v) for k, v in _emoji_data.items() if k and v})
+rebuild_emoji_regex()
+
+def save_emoji_db():
+    _save_json(EMOJI_FILE, EMOJI_MAP, "emoji")
 
 def get_promo_percent():
     try:
@@ -1258,6 +1409,23 @@ def build_topup_qr(user_id, amount, bank_idx):
         f"⚠️ <i>LƯU Ý: Vui lòng chuyển chính xác nội dung ID <code>{user_id}</code> để hệ thống cộng tiền tự động!</i>"
     )
     return qr_url, caption
+
+def fetch_qr_bytes(qr_url, tries=3):
+    """Tải ảnh QR về server rồi mới gửi cho khách (không phụ thuộc việc Telegram tự tải link).
+    Đây là nguyên nhân khách bấm chọn STK bị 'đơ': Telegram tải link QR của khách mới bị chậm/lỗi
+    nên send_photo(URL) ném lỗi và bot không gửi gì."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0)"}
+    for i in range(tries):
+        try:
+            r = requests.get(qr_url, headers=headers, timeout=10)
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            if r.status_code == 200 and ctype.startswith("image") and len(r.content) > 500:
+                return r.content
+            logging.warning(f"QR lần {i + 1}: HTTP {r.status_code} | {ctype} | {len(r.content)}B")
+        except Exception as e:
+            logging.warning(f"QR lần {i + 1} lỗi: {e}")
+        time.sleep(1)
+    return None
 
 def is_admin(user_id, username):
     return str(user_id) == str(ADMIN_CHAT_ID) or (username and username == ADMIN_USERNAME.replace('@',''))
@@ -2524,6 +2692,109 @@ async def receive_private_msg_text_handler(update: Update, context: ContextTypes
     await update.message.reply_text(result_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     return ConversationHandler.END
 
+# ==================== LỆNH ADMIN: QUẢN LÝ EMOJI ĐỘNG ====================
+def _emoji_pack_name(arg):
+    arg = (arg or "").strip().rstrip("/")
+    return arg.split("/")[-1].split("?")[0]
+
+async def emoji_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/emojipack <link hoặc tên bộ emoji> : nạp emoji động từ bộ emoji (không cần Premium)."""
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "ℹ️ Cú pháp: <code>/emojipack https://t.me/addemoji/TEN_BO</code>\n"
+            "Có thể nhập nhiều bộ cùng lúc, cách nhau bởi dấu cách.",
+            parse_mode="HTML"
+        )
+        return
+    added, total_stickers, errors = 0, 0, []
+    for arg in context.args:
+        name = _emoji_pack_name(arg)
+        try:
+            sset = await context.bot.get_sticker_set(name)
+        except Exception as e:
+            errors.append(f"{name}: {e}")
+            continue
+        for st in sset.stickers:
+            total_stickers += 1
+            eid = getattr(st, "custom_emoji_id", None)
+            em = _norm_emoji(st.emoji or "")
+            if eid and em and len(em) <= 12 and em not in EMOJI_MAP:
+                EMOJI_MAP[em] = str(eid)
+                added += 1
+    rebuild_emoji_regex()
+    save_emoji_db()
+    msg = f"✅ Đã thêm <b>{added}</b> emoji động (tổng đang dùng: <b>{len(EMOJI_MAP)}</b>)."
+    if total_stickers and not added:
+        msg += "\nℹ️ Các emoji trong bộ này đã có sẵn hoặc không phải bộ emoji động."
+    if errors:
+        msg += "\n⚠️ Lỗi: " + html.escape("; ".join(errors)[:300])
+    await update.message.reply_text(msg, parse_mode="HTML")
+
+async def emoji_list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return
+    if not EMOJI_MAP:
+        await update.message.reply_text("ℹ️ Chưa có emoji động nào. Dùng /emojipack để nạp.")
+        return
+    await update.message.reply_text(
+        f"🎨 Đang có {len(EMOJI_MAP)} emoji động:\n" + " ".join(EMOJI_MAP.keys())[:3500]
+    )
+
+async def emoji_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return
+    EMOJI_MAP.clear()
+    rebuild_emoji_regex()
+    save_emoji_db()
+    await update.message.reply_text("🗑️ Đã xóa toàn bộ emoji động. Bot quay lại dùng emoji thường.")
+
+async def emoji_remove_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return
+    removed = 0
+    for tok in " ".join(context.args or []).split():
+        if EMOJI_MAP.pop(_norm_emoji(tok), None):
+            removed += 1
+    rebuild_emoji_regex()
+    save_emoji_db()
+    await update.message.reply_text(f"🗑️ Đã xóa {removed} emoji. Còn lại {len(EMOJI_MAP)}.")
+
+async def emoji_capture_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin gửi tin nhắn CHỈ gồm emoji động (cần Premium) -> bot tự lưu cặp emoji thường -> emoji động."""
+    user = update.effective_user
+    msg = update.message
+    if not msg or not is_admin(user.id, user.username):
+        return
+    text = msg.text or msg.caption or ""
+    ents = [e for e in (msg.entities or msg.caption_entities or []) if e.type == MessageEntity.CUSTOM_EMOJI]
+    if not ents:
+        return
+    parts = []
+    for e in ents:
+        if msg.text:
+            parts.append((msg.parse_entity(e), e.custom_emoji_id))
+        else:
+            parts.append((msg.parse_caption_entity(e), e.custom_emoji_id))
+    covered = sum(len(p[0]) for p in parts)
+    if covered < len("".join(text.split())):
+        return  # tin nhắn có chữ khác -> không phải tin nhắn nạp emoji
+    added = 0
+    for em, eid in parts:
+        key = _norm_emoji(em)
+        if key and eid and EMOJI_MAP.get(key) != eid:
+            EMOJI_MAP[key] = eid
+            added += 1
+    if added:
+        rebuild_emoji_regex()
+        save_emoji_db()
+    await msg.reply_text(f"✅ Đã lưu {added} emoji động (tổng: {len(EMOJI_MAP)}).")
+
 async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
@@ -2931,9 +3202,30 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🎉 Cài Đặt Khuyến Mãi Nạp", callback_data="admin_promo_menu")],
             [InlineKeyboardButton("📢 Tạo Thông Báo Broadcast", callback_data="admin_broadcast_menu")],
             [InlineKeyboardButton("👤 Gửi Thông Báo Riêng (Cá Nhân)", callback_data="admin_private_msg_menu")],
+            [InlineKeyboardButton("🎨 Emoji Động (Custom Emoji)", callback_data="admin_emoji_menu")],
             [InlineKeyboardButton("💾 AUTO_BACKUP (Telegram)", callback_data="admin_backup_menu")],
             [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
         ]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "admin_emoji_menu":
+        if not is_admin(user.id, user.username):
+            return
+        btn_state = "🟢 Bật" if ANIM_BUTTONS[0] else "🔴 Tắt (Telegram từ chối hoặc ANIM_BUTTONS=0)"
+        text = (
+            f"🎨 <b>EMOJI ĐỘNG (CUSTOM EMOJI)</b>\n"
+            f"----------------------------------------\n"
+            f"📌 <b>Đang dùng:</b> <code>{len(EMOJI_MAP)}</code> emoji động\n"
+            f"🔘 <b>Icon động trên nút bấm:</b> {btn_state}\n\n"
+            f"<b>Cách nạp emoji động:</b>\n"
+            f"1️⃣ <code>/emojipack https://t.me/addemoji/TEN_BO</code> (không cần Premium)\n"
+            f"2️⃣ Hoặc gửi cho bot 1 tin nhắn CHỈ gồm emoji động (cần Premium) - bot tự học.\n\n"
+            f"Bot tự thay emoji thường (👍 ❤️ 💳 ...) bằng emoji động tương ứng trong mọi tin nhắn và nút bấm.\n\n"
+            f"<b>Lệnh:</b> <code>/emojilist</code> · <code>/emojiremove 👍</code> · <code>/emojireset</code>\n\n"
+            f"⚠️ <i>Telegram chỉ hiển thị emoji động từ bot nếu bot đã mua username phụ trên Fragment "
+            f"(hoặc chủ bot có Premium với icon nút). Nếu không đủ điều kiện, khách vẫn thấy emoji thường bình thường.</i>"
+        )
+        keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "admin_bulk_topup_menu":
@@ -3554,7 +3846,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         if query.message.photo or query.message.video:
             await query.message.delete()
-            await query.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            await context.bot.send_message(chat_id=user.id, text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -3572,27 +3864,80 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
     elif data.startswith("bank:"):
+        # ===== ĐÃ SỬA: chọn STK xong khách luôn nhận được thông tin chuyển khoản =====
         _, idx_str, amount_str = data.split(":")
         bank_idx, amount = int(idx_str), int(amount_str)
         qr_url, text = build_topup_qr(user.id, amount, bank_idx)
-        keyboard = [
+        markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Đã Chuyển Khoản", callback_data=f"confirm_trans:{amount}")],
             [InlineKeyboardButton("🏦 Đổi Số Tài Khoản", callback_data=f"amount:{amount}")],
             [InlineKeyboardButton("🔄 Chọn Lại Mệnh Giá", callback_data="nap_tien")]
-        ]
-        await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        ])
+
+        # Báo ngay cho khách biết bot đang tạo QR (không còn cảm giác bị đơ)
         try:
-            await query.message.delete()
+            await query.edit_message_text("⏳ <b>Đang tạo mã QR, vui lòng chờ vài giây...</b>", parse_mode="HTML")
         except Exception:
             pass
 
+        sent = False
+        # Cách 1: bot tự tải ảnh QR rồi upload lên Telegram (ổn định nhất)
+        qr_bytes = await asyncio.to_thread(fetch_qr_bytes, qr_url)
+        if qr_bytes:
+            try:
+                await context.bot.send_photo(chat_id=user.id, photo=qr_bytes, caption=text, parse_mode="HTML", reply_markup=markup)
+                sent = True
+            except Exception as e:
+                logging.error(f"❌ Gửi ảnh QR (bytes) cho {user.id} lỗi: {e}")
+
+        # Cách 2: nhờ Telegram tự tải link QR
+        if not sent:
+            try:
+                await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=text, parse_mode="HTML", reply_markup=markup)
+                sent = True
+            except Exception as e:
+                logging.error(f"❌ Gửi ảnh QR (URL) cho {user.id} lỗi: {e}")
+
+        # Cách 3: không có ảnh vẫn gửi đủ STK + nội dung chuyển khoản dạng chữ
+        if not sent:
+            try:
+                await context.bot.send_message(
+                    chat_id=user.id,
+                    text=text + f'\n\n🔗 <a href="{html.escape(qr_url, quote=True)}">Bấm vào đây để mở mã QR</a>',
+                    parse_mode="HTML",
+                    reply_markup=markup
+                )
+                sent = True
+            except Exception as e:
+                logging.error(f"❌ Gửi thông tin CK dạng chữ cho {user.id} lỗi: {e}")
+
+        if sent:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+        else:
+            try:
+                await query.edit_message_text(
+                    "❌ <b>Không tạo được thông tin chuyển khoản!</b>\n⚠️ <i>Vui lòng thử lại hoặc liên hệ Admin.</i>",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Thử Lại", callback_data=f"bank:{bank_idx}:{amount}")],
+                        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+                    ])
+                )
+            except Exception:
+                pass
+
     elif data.startswith("confirm_trans:"):
         amount = float(data.split(":")[1])
-        await query.edit_message_caption(
-            caption=f"⏳ Đã gửi yêu cầu nạp <code>{amount:,.0f} VNĐ</code>. Hệ thống đang xử lý duyệt tiền...",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Trở Về Menu", callback_data="menu_main")]])
-        )
+        confirm_text = f"⏳ Đã gửi yêu cầu nạp <code>{amount:,.0f} VNĐ</code>. Hệ thống đang xử lý duyệt tiền..."
+        confirm_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Trở Về Menu", callback_data="menu_main")]])
+        # Tin nhắn QR có thể là ảnh (có caption) hoặc chữ (khi gửi QR dạng chữ)
+        if query.message.photo:
+            await query.edit_message_caption(caption=confirm_text, parse_mode="HTML", reply_markup=confirm_markup)
+        else:
+            await query.edit_message_text(confirm_text, parse_mode="HTML", reply_markup=confirm_markup)
         user_mention = get_user_mention(user)
 
         admin_notice = (
@@ -3801,6 +4146,16 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         return
     logging.error("Lỗi không bắt được trong bot:", exc_info=err)
 
+    # Khách bấm nút mà bot lỗi -> báo cho khách biết thay vì im lặng (cảm giác bị đơ)
+    try:
+        if isinstance(update, Update) and update.callback_query and err_name not in ("NetworkError", "TimedOut"):
+            await context.bot.send_message(
+                chat_id=update.callback_query.from_user.id,
+                text="⚠️ Có lỗi khi xử lý yêu cầu của bạn. Vui lòng thử lại hoặc gõ /start để mở lại menu."
+            )
+    except Exception:
+        pass
+
 async def admin_restore_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin gửi file backup_*.zip cho bot -> khôi phục toàn bộ dữ liệu."""
     user = update.effective_user
@@ -3831,15 +4186,20 @@ def main():
     start_tg_backup_worker()
     keep_alive()
 
+    # Bot tự động đổi emoji thường -> emoji động (AnimBot), vẫn giữ nguyên cấu hình kết nối cũ
+    request_cfg = HTTPXRequest(
+        connection_pool_size=64,
+        pool_timeout=15,
+        connect_timeout=15,
+        read_timeout=20,
+        write_timeout=20,
+    )
+    anim_bot = AnimBot(token=BOT_TOKEN, request=request_cfg)
+
     application = (
         ApplicationBuilder()
-        .token(BOT_TOKEN)
+        .bot(anim_bot)
         .concurrent_updates(True)      # xử lý nhiều người cùng lúc, không xếp hàng
-        .connection_pool_size(64)
-        .pool_timeout(15)
-        .connect_timeout(15)
-        .read_timeout(20)
-        .write_timeout(20)
         .build()
     )
     bot_app = application
@@ -3881,8 +4241,13 @@ def main():
     )
 
     application.add_handler(CommandHandler("topup", admin_topup_cmd))
+    application.add_handler(CommandHandler("emojipack", emoji_pack_cmd))
+    application.add_handler(CommandHandler("emojilist", emoji_list_cmd))
+    application.add_handler(CommandHandler("emojiremove", emoji_remove_cmd))
+    application.add_handler(CommandHandler("emojireset", emoji_reset_cmd))
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(filters.Document.ALL, admin_restore_document_handler), group=1)
+    application.add_handler(MessageHandler(filters.Entity(MessageEntity.CUSTOM_EMOJI), emoji_capture_handler), group=2)
     application.add_error_handler(error_handler)
 
     print("🤖 Bot đang chạy...")
@@ -3891,4 +4256,4 @@ def main():
     flush_backup()  # đẩy dữ liệu lên backup lần cuối khi bị tắt (SIGTERM)
 
 if __name__ == "__main__":
- main()
+    main()
