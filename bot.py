@@ -1096,8 +1096,112 @@ SMS_PACKAGES = {
     INPUT_CREATE_CODE_CUSTOM, INPUT_ADMIN_EDIT_USER, INPUT_SMS_PHONE, 
     INPUT_BROADCAST_PHOTO, INPUT_BROADCAST_TEXT, 
     INPUT_PRIVATE_MSG_USER_ID, INPUT_PRIVATE_MSG_PHOTO, INPUT_PRIVATE_MSG_TEXT,
-    INPUT_CREATE_BOT_REQUIREMENTS, INPUT_USER_FEEDBACK, INPUT_PROMO_PERCENT
-) = range(15)
+    INPUT_CREATE_BOT_REQUIREMENTS, INPUT_USER_FEEDBACK, INPUT_PROMO_PERCENT,
+    INPUT_BULK_TOPUP
+) = range(16)
+
+# ==================== CỘNG SỐ DƯ HÀNG LOẠT (ADMIN, KHÔNG THÔNG BÁO CHO KHÁCH) ====================
+def _parse_bulk_amount(tok):
+    """Đọc số tiền: 50000, 50.000, 50,000, 50k, 50000đ ..."""
+    t = tok.lower().replace(".", "").replace(",", "").replace("đ", "").replace("vnd", "").strip()
+    mult = 1
+    if t.endswith("k"):
+        mult, t = 1000, t[:-1]
+    val = float(t) * mult
+    if val <= 0:
+        raise ValueError
+    return val
+
+def parse_bulk_topup(text):
+    """Trả về (mode, data, errors). mode = 'all' | 'list'."""
+    entries, errors, all_amount = {}, [], None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = [p for p in re.split(r"[\s:|=;]+", line) if p]
+        if len(parts) < 2:
+            errors.append(f"Dòng sai cú pháp: {line}")
+            continue
+        try:
+            amount = _parse_bulk_amount(parts[-1])
+        except ValueError:
+            errors.append(f"Số tiền không hợp lệ: {line}")
+            continue
+        if parts[0].lower() in ("all", "tatca", "tất_cả"):
+            all_amount = amount
+            continue
+        try:
+            uid = int(parts[0])
+        except ValueError:
+            errors.append(f"ID không hợp lệ: {line}")
+            continue
+        entries[uid] = entries.get(uid, 0) + amount
+    if all_amount is not None:
+        if entries:
+            return "error", None, ["Dòng ALL phải dùng riêng, không trộn với danh sách ID."]
+        return "all", all_amount, errors
+    return "list", entries, errors
+
+async def receive_bulk_topup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return ConversationHandler.END
+
+    mode, data, errors = parse_bulk_topup(update.message.text or "")
+    back_kb = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
+
+    if mode == "error" or (mode == "list" and not data):
+        err_txt = "\n".join(errors) if errors else "Không có dòng hợp lệ nào."
+        await update.message.reply_text(
+            f"⚠️ <b>Không đọc được dữ liệu:</b>\n{html.escape(err_txt)}\n\n💬 Vui lòng gửi lại theo mẫu:\n<code>ID SỐ_TIỀN</code> (mỗi khách 1 dòng)",
+            parse_mode="HTML", reply_markup=InlineKeyboardMarkup(back_kb)
+        )
+        return INPUT_BULK_TOPUP
+
+    missing = []
+    if mode == "all":
+        context.user_data["bulk_topup"] = {"mode": "all", "amount": data}
+        total_users = len(USERS_DB)
+        summary = (
+            f"👥 Áp dụng cho <b>TẤT CẢ {total_users} khách</b>\n"
+            f"💵 Mỗi khách: <code>+{data:,.0f}đ</code>\n"
+            f"💰 Tổng cộng: <code>{data * total_users:,.0f}đ</code>"
+        )
+    else:
+        valid = {uid: amt for uid, amt in data.items() if uid in USERS_DB}
+        missing = [uid for uid in data if uid not in USERS_DB]
+        if not valid:
+            await update.message.reply_text(
+                "⚠️ Không có ID nào tồn tại trong hệ thống. Vui lòng kiểm tra lại ID:",
+                reply_markup=InlineKeyboardMarkup(back_kb)
+            )
+            return INPUT_BULK_TOPUP
+        context.user_data["bulk_topup"] = {"mode": "list", "entries": valid}
+        lines = [f"• <code>{uid}</code>: +{amt:,.0f}đ" for uid, amt in list(valid.items())[:30]]
+        if len(valid) > 30:
+            lines.append(f"... và {len(valid) - 30} khách khác")
+        summary = (
+            f"👥 Số khách: <b>{len(valid)}</b>\n"
+            f"💰 Tổng cộng: <code>{sum(valid.values()):,.0f}đ</code>\n\n" + "\n".join(lines)
+        )
+
+    warn = ""
+    if missing:
+        warn += f"\n\n⚠️ <b>Bỏ qua {len(missing)} ID không tồn tại:</b> " + ", ".join(f"<code>{m}</code>" for m in missing[:20])
+    if errors:
+        warn += "\n\n⚠️ <b>Dòng lỗi (bỏ qua):</b>\n" + html.escape("\n".join(errors[:10]))
+
+    await update.message.reply_text(
+        f"📋 <b>XÁC NHẬN CỘNG SỐ DƯ HÀNG LOẠT</b>\n----------------------------------------\n{summary}{warn}\n\n"
+        f"🔕 <i>Khách hàng sẽ KHÔNG nhận thông báo.</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Xác nhận cộng", callback_data="bulk_topup_confirm")],
+            [InlineKeyboardButton("❌ Hủy", callback_data="admin_panel")]
+        ])
+    )
+    return ConversationHandler.END
 
 # Các dịch vụ bình luận: KHÔNG chạy tự động, gửi đơn về Admin để chạy tay
 MANUAL_ORDER_CATS = ("fb_cmt", "tt_cmt")
@@ -2824,6 +2928,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         keyboard = [
             [InlineKeyboardButton("👥 Danh sách Khách & Số Dư", callback_data="admin_list_users")],
+            [InlineKeyboardButton("➕ Cộng Số Dư Hàng Loạt", callback_data="admin_bulk_topup_menu")],
             [InlineKeyboardButton("🎁 Tạo & Quản lý Gitcode", callback_data="admin_gitcode_menu")],
             [InlineKeyboardButton("📱 Xem các gói SMS đang chạy", callback_data="admin_sms_list_all")],
             [InlineKeyboardButton("🎉 Cài Đặt Khuyến Mãi Nạp", callback_data="admin_promo_menu")],
@@ -2833,6 +2938,62 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
         ]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "admin_bulk_topup_menu":
+        if not is_admin(user.id, user.username):
+            return
+        context.user_data.pop("bulk_topup", None)
+        text = (
+            f"➕ <b>CỘNG SỐ DƯ HÀNG LOẠT</b>\n"
+            f"----------------------------------------\n"
+            f"💬 Gửi danh sách, <b>mỗi khách 1 dòng</b>:\n"
+            f"<code>ID SỐ_TIỀN</code>\n\n"
+            f"Ví dụ:\n"
+            f"<code>6900793565 50000\n"
+            f"1234567890 100k\n"
+            f"5555555555 20.000</code>\n\n"
+            f"👥 Muốn cộng cho <b>TẤT CẢ khách</b> thì gửi 1 dòng:\n"
+            f"<code>ALL 10000</code>\n\n"
+            f"🔕 <i>Khách hàng sẽ không nhận thông báo. Bạn sẽ được xem lại và xác nhận trước khi cộng.</i>"
+        )
+        keyboard = [[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        return INPUT_BULK_TOPUP
+
+    elif data == "bulk_topup_confirm":
+        if not is_admin(user.id, user.username):
+            return
+        job = context.user_data.pop("bulk_topup", None)
+        if not job:
+            await query.edit_message_text(
+                "⚠️ Phiên cộng tiền đã hết hạn hoặc đã được xử lý rồi.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
+            )
+            return
+        count, total = 0, 0.0
+        with DB_LOCK:
+            if job["mode"] == "all":
+                plan = {uid: job["amount"] for uid in list(USERS_DB.keys())}
+            else:
+                plan = job["entries"]
+            for uid, amt in plan.items():
+                if uid not in USERS_DB:
+                    continue
+                ud = get_user_data(uid)
+                ud["balance"] += amt
+                ud["history"].append(f"Admin cộng số dư: +{amt:,.0f}đ")
+                count += 1
+                total += amt
+            save_users_db()
+        tg_backup_async("admin cộng hàng loạt")
+        await query.edit_message_text(
+            f"✅ <b>ĐÃ CỘNG SỐ DƯ HÀNG LOẠT!</b>\n\n"
+            f"👥 Số khách đã cộng: <code>{count}</code>\n"
+            f"💰 Tổng tiền: <code>{total:,.0f}đ</code>\n"
+            f"🔕 <i>Không gửi thông báo cho khách.</i>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
+        )
 
     elif data in ("admin_backup_menu", "admin_backup_now"):
         if not is_admin(user.id, user.username):
@@ -3715,6 +3876,7 @@ def main():
             INPUT_CREATE_BOT_REQUIREMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_bot_requirements_handler)],
             INPUT_USER_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_feedback_handler)],
             INPUT_PROMO_PERCENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_promo_percent_handler)],
+            INPUT_BULK_TOPUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_bulk_topup_handler)],
         },
         fallbacks=[
             CommandHandler("start", start),
