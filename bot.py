@@ -1273,6 +1273,54 @@ def build_qr_urls(user_id, amount, bank_idx):
         f"&amount={int(amount)}&des={user_id}",
     ]
 
+BUILD_TAG = "qr-v3"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
+
+# Tạo QR ngay trong bot (không phụ thuộc vietqr.io / Telegram tải link). Cần thư viện: qrcode[pil]
+BANK_BINS = {"MBBank": "970422", "MB": "970422"}   # mã BIN ngân hàng theo chuẩn NAPAS
+
+def _tlv(tag, value):
+    return f"{tag}{len(value):02d}{value}"
+
+def _crc16_ccitt(text):
+    crc = 0xFFFF
+    for b in text.encode():
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)
+            crc &= 0xFFFF
+    return f"{crc:04X}"
+
+def build_vietqr_payload(bank, amount, content):
+    """Chuỗi VietQR (NAPAS 247) chuyển tới đúng số tài khoản, đúng số tiền và nội dung."""
+    bin_code = BANK_BINS.get(bank["bank_name"])
+    if not bin_code:
+        return None
+    consumer = _tlv("00", bin_code) + _tlv("01", str(bank["account_no"]))
+    merchant = _tlv("00", "A000000727") + _tlv("01", consumer) + _tlv("02", "QRIBFTTA")
+    payload = (
+        _tlv("00", "01") + _tlv("01", "12") + _tlv("38", merchant)
+        + _tlv("53", "704") + _tlv("54", str(int(amount))) + _tlv("58", "VN")
+        + _tlv("62", _tlv("08", str(content)))
+        + "6304"
+    )
+    return payload + _crc16_ccitt(payload)
+
+def make_local_qr_png(user_id, amount, bank_idx):
+    """Vẽ ảnh QR tại chỗ. Trả bytes PNG, hoặc None nếu thiếu thư viện/không hỗ trợ ngân hàng."""
+    try:
+        import qrcode
+        if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
+            bank_idx = 0
+        payload = build_vietqr_payload(BANK_ACCOUNTS[bank_idx], amount, user_id)
+        if not payload:
+            return None
+        buf = io.BytesIO()
+        qrcode.make(payload, border=3, box_size=10).save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        logging.warning(f"QR: không tạo được QR tại chỗ ({type(e).__name__}: {e})")
+        return None
+
 def download_qr_image(urls, total_timeout=14):
     """Bot tự tải ảnh QR (chạy ở luồng riêng) thay vì để Telegram tự tải link.
     Trả về bytes ảnh, hoặc None nếu mọi link đều lỗi/quá chậm."""
@@ -1307,7 +1355,11 @@ async def send_topup_qr(query, context, user, amount, bank_idx):
         pass
 
     sent = False
+    source = "link"
     img = await asyncio.to_thread(download_qr_image, build_qr_urls(user.id, amount, bank_idx))
+    if not img:
+        source = "local"
+        img = await asyncio.to_thread(make_local_qr_png, user.id, amount, bank_idx)
     if img:
         try:
             await context.bot.send_photo(
@@ -1315,6 +1367,7 @@ async def send_topup_qr(query, context, user, amount, bank_idx):
                 caption=caption, parse_mode="HTML", reply_markup=markup
             )
             sent = True
+            logging.info(f"✅ QR gửi OK cho {user.id} (nguồn: {source})")
         except Exception as e:
             logging.error(f"❌ Gửi ảnh QR (file) lỗi: {e}")
 
@@ -1323,11 +1376,13 @@ async def send_topup_qr(query, context, user, amount, bank_idx):
         try:
             await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=caption, parse_mode="HTML", reply_markup=markup)
             sent = True
+            logging.info(f"✅ QR gửi OK cho {user.id} (Telegram tự tải link)")
         except Exception as e:
             logging.error(f"❌ Gửi ảnh QR (link) lỗi: {e}")
 
     if not sent:
         # Không tạo được ảnh -> vẫn gửi thông tin chuyển khoản dạng chữ để khách không bị kẹt
+        logging.error(f"❌ Không có ảnh QR cho {user.id}: tải link lỗi, tạo tại chỗ lỗi (thiếu qrcode[pil]?), Telegram tải link lỗi -> gửi dạng chữ")
         try:
             await context.bot.send_message(
                 chat_id=user.id,
@@ -3981,6 +4036,12 @@ def main():
     application.add_error_handler(error_handler)
 
     print("🤖 Bot đang chạy...")
+    logging.info(f"🟢 BUILD {BUILD_TAG} đã khởi động")
+    # Python 3.14 không còn tự tạo event loop cho luồng chính -> tự tạo để run_polling không bị lỗi
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
     application.run_polling(drop_pending_updates=True)
     flush_saves()   # ghi nốt dữ liệu đang chờ xuống file
     flush_backup()  # đẩy dữ liệu lên backup lần cuối khi bị tắt (SIGTERM)
