@@ -11,9 +11,10 @@ import sys
 import threading
 import zipfile
 import io
+import urllib.parse
 from threading import Thread
 from flask import Flask, request, jsonify
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -1259,6 +1260,102 @@ def build_topup_qr(user_id, amount, bank_idx):
     )
     return qr_url, caption
 
+def build_qr_urls(user_id, amount, bank_idx):
+    """Danh sách link ảnh QR (thử lần lượt, link nào tải được thì dùng)."""
+    if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
+        bank_idx = 0
+    bank = BANK_ACCOUNTS[bank_idx]
+    name_q = urllib.parse.quote(bank["account_name"])
+    return [
+        f"https://img.vietqr.io/image/{bank['bank_name']}-{bank['account_no']}-compact2.png"
+        f"?amount={int(amount)}&addInfo={user_id}&accountName={name_q}",
+        f"https://qr.sepay.vn/img?acc={bank['account_no']}&bank={bank['bank_name']}"
+        f"&amount={int(amount)}&des={user_id}",
+    ]
+
+def download_qr_image(urls, total_timeout=14):
+    """Bot tự tải ảnh QR (chạy ở luồng riêng) thay vì để Telegram tự tải link.
+    Trả về bytes ảnh, hoặc None nếu mọi link đều lỗi/quá chậm."""
+    deadline = time.time() + total_timeout
+    for url in urls:
+        left = deadline - time.time()
+        if left <= 1:
+            break
+        try:
+            r = requests.get(url, timeout=min(7, left), headers={"User-Agent": "Mozilla/5.0"})
+            ctype = r.headers.get("Content-Type", "")
+            if r.status_code == 200 and r.content and ctype.startswith("image/"):
+                return r.content
+            logging.warning(f"QR: link trả về HTTP {r.status_code} ({ctype}): {url[:80]}")
+        except Exception as e:
+            logging.warning(f"QR: không tải được {url[:80]}: {e}")
+    return None
+
+async def send_topup_qr(query, context, user, amount, bank_idx):
+    """Gửi QR nạp tiền. Luôn có phản hồi cho khách: ảnh QR -> (thử link trực tiếp) -> tin nhắn chữ."""
+    qr_url, caption = build_topup_qr(user.id, amount, bank_idx)
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Đã Chuyển Khoản", callback_data=f"confirm_trans:{amount}")],
+        [InlineKeyboardButton("🏦 Đổi Số Tài Khoản", callback_data=f"amount:{amount}")],
+        [InlineKeyboardButton("🔄 Chọn Lại Mệnh Giá", callback_data="nap_tien")]
+    ])
+
+    # Báo ngay cho khách biết bot đang làm việc (không để màn hình đứng im)
+    try:
+        await query.edit_message_text("⏳ <b>Đang tạo mã QR, vui lòng chờ vài giây...</b>", parse_mode="HTML")
+    except Exception:
+        pass
+
+    sent = False
+    img = await asyncio.to_thread(download_qr_image, build_qr_urls(user.id, amount, bank_idx))
+    if img:
+        try:
+            await context.bot.send_photo(
+                chat_id=user.id, photo=InputFile(io.BytesIO(img), filename="qr.png"),
+                caption=caption, parse_mode="HTML", reply_markup=markup
+            )
+            sent = True
+        except Exception as e:
+            logging.error(f"❌ Gửi ảnh QR (file) lỗi: {e}")
+
+    if not sent:
+        # Cách cuối cho ảnh: để Telegram tự tải link
+        try:
+            await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=caption, parse_mode="HTML", reply_markup=markup)
+            sent = True
+        except Exception as e:
+            logging.error(f"❌ Gửi ảnh QR (link) lỗi: {e}")
+
+    if not sent:
+        # Không tạo được ảnh -> vẫn gửi thông tin chuyển khoản dạng chữ để khách không bị kẹt
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=caption + "\n\n⚠️ <i>Hệ thống chưa tạo được ảnh QR, bạn vui lòng chuyển khoản thủ công theo thông tin trên (đúng nội dung) - tiền vẫn được cộng tự động.</i>",
+                parse_mode="HTML", reply_markup=markup
+            )
+            sent = True
+        except Exception as e:
+            logging.error(f"❌ Gửi thông tin chuyển khoản lỗi: {e}")
+
+    if sent:
+        try:
+            await query.message.delete()   # xoá tin "Đang tạo mã QR..."
+        except Exception:
+            pass
+    else:
+        try:
+            await query.edit_message_text(
+                "❌ <b>Không tạo được mã QR lúc này.</b>\nVui lòng thử lại sau ít phút hoặc liên hệ Admin.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Thử lại", callback_data=f"bank:{bank_idx}:{amount}")],
+                    [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+                ])
+            )
+        except Exception:
+            pass
+
 def is_admin(user_id, username):
     return str(user_id) == str(ADMIN_CHAT_ID) or (username and username == ADMIN_USERNAME.replace('@',''))
 
@@ -1565,11 +1662,11 @@ async def admin_topup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def custom_topup_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     try:
-        amount = float(text)
-        if amount <= 0:
+        amount = float(int(_parse_bulk_amount(text)))
+        if amount < 1000 or amount > 500000000:
             raise ValueError
     except ValueError:
-        await update.message.reply_text("⚠️ Số tiền không hợp lệ! Vui lòng nhập lại số tiền (Ví dụ: 100000):")
+        await update.message.reply_text("⚠️ Số tiền không hợp lệ (tối thiểu 1.000đ)! Vui lòng nhập lại số tiền (Ví dụ: 100000):")
         return INPUT_TOPUP_AMOUNT
 
     text_out, markup = build_bank_choice(amount)
@@ -3574,25 +3671,23 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
     elif data.startswith("bank:"):
         _, idx_str, amount_str = data.split(":")
         bank_idx, amount = int(idx_str), int(amount_str)
-        qr_url, text = build_topup_qr(user.id, amount, bank_idx)
-        keyboard = [
-            [InlineKeyboardButton("✅ Đã Chuyển Khoản", callback_data=f"confirm_trans:{amount}")],
-            [InlineKeyboardButton("🏦 Đổi Số Tài Khoản", callback_data=f"amount:{amount}")],
-            [InlineKeyboardButton("🔄 Chọn Lại Mệnh Giá", callback_data="nap_tien")]
-        ]
-        await context.bot.send_photo(chat_id=user.id, photo=qr_url, caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        # Chống bấm liên tục khi đang tạo QR (tránh gửi trùng nhiều ảnh)
+        if time.time() - context.user_data.get("qr_busy", 0) < 20:
+            return
+        context.user_data["qr_busy"] = time.time()
         try:
-            await query.message.delete()
-        except Exception:
-            pass
+            await send_topup_qr(query, context, user, amount, bank_idx)
+        finally:
+            context.user_data["qr_busy"] = 0
 
     elif data.startswith("confirm_trans:"):
         amount = float(data.split(":")[1])
-        await query.edit_message_caption(
-            caption=f"⏳ Đã gửi yêu cầu nạp <code>{amount:,.0f} VNĐ</code>. Hệ thống đang xử lý duyệt tiền...",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Trở Về Menu", callback_data="menu_main")]])
-        )
+        wait_text = f"⏳ Đã gửi yêu cầu nạp <code>{amount:,.0f} VNĐ</code>. Hệ thống đang xử lý duyệt tiền..."
+        wait_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Trở Về Menu", callback_data="menu_main")]])
+        if query.message.photo:
+            await query.edit_message_caption(caption=wait_text, parse_mode="HTML", reply_markup=wait_markup)
+        else:
+            await query.edit_message_text(wait_text, parse_mode="HTML", reply_markup=wait_markup)
         user_mention = get_user_mention(user)
 
         admin_notice = (
