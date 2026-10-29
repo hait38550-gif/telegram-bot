@@ -9,6 +9,8 @@ import re
 import base64
 import sys
 import threading
+import zipfile
+import io
 from threading import Thread
 from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -266,6 +268,192 @@ SMS_DB_FILE = os.path.join(DB_DIR, "sms_db.json")
 SEPAY_TX_FILE = os.path.join(DB_DIR, "sepay_tx.json")
 PROMO_FILE = os.path.join(DB_DIR, "promo_db.json")
 
+# ==================== AUTO_BACKUP LÊN TELEGRAM ====================
+# Gửi file zip chứa toàn bộ dữ liệu cho Admin và GHIM lại. Khi Render chạy lại sẽ tự khôi phục từ tin ghim.
+# Biến môi trường (tùy chọn): TG_BACKUP_CHAT_ID (mặc định = ADMIN_CHAT_ID), TG_BACKUP_ENABLED=0 để tắt.
+TG_BACKUP_CHAT_ID = (os.getenv("TG_BACKUP_CHAT_ID", "").strip() or str(ADMIN_CHAT_ID))
+TG_BACKUP_ENABLED = os.getenv("TG_BACKUP_ENABLED", "1") != "0"
+TG_BACKUP_MIN_INTERVAL = 30     # giây: gộp nhiều thay đổi thành 1 lần gửi
+TG_BACKUP_EVERY = 3600          # giây: gửi định kỳ 1 giờ/lần
+_TG_STATE = {"dirty": False, "last_sent": time.time(), "last_ok": 0.0, "last_msg_id": None, "last_err": ""}
+_TG_LOCK = threading.Lock()
+_TG_SEND_LOCK = threading.Lock()
+_TG_RESTORED = False
+
+def _tg_files():
+    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE]
+
+def _tg_ready():
+    return bool(TG_BACKUP_ENABLED and TG_BACKUP_CHAT_ID and TG_BACKUP_CHAT_ID != "YOUR_ADMIN_CHAT_ID"
+                and BOT_TOKEN and BOT_TOKEN != "YOUR_BOT_TOKEN")
+
+def tg_mark_dirty():
+    with _TG_LOCK:
+        _TG_STATE["dirty"] = True
+
+def tg_backup_send(reason="auto"):
+    """Nén dữ liệu và gửi lên Telegram (ghim). Trả True nếu thành công."""
+    if not _tg_ready():
+        _TG_STATE["last_err"] = "Chưa cấu hình chat nhận backup"
+        return False
+    with _TG_SEND_LOCK:
+        try:
+            if not USERS_DB:
+                # Dữ liệu rỗng -> không gửi để tránh đè mất bản backup tốt
+                _TG_STATE["last_err"] = "Dữ liệu khách đang rỗng, bỏ qua backup"
+                return False
+            with _TG_LOCK:
+                _TG_STATE["dirty"] = False
+                _TG_STATE["last_sent"] = time.time()
+            flush_saves()  # ghi hết dữ liệu đang chờ xuống file trước khi nén
+
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for p in _tg_files():
+                    if os.path.exists(p):
+                        with open(p, "rb") as f:
+                            zf.writestr(os.path.basename(p), f.read())
+            buf.seek(0)
+
+            stamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime(time.time() + 7 * 3600))
+            fname = f"backup_{stamp}.zip"
+            caption = (
+                f"💾 AUTO_BACKUP ({reason})\n"
+                f"🕒 {stamp}\n"
+                f"👥 Khách: {len(USERS_DB)} | 💰 Tổng số dư: {sum(float(u.get('balance', 0)) for u in USERS_DB.values()):,.0f}đ"
+            )
+            r = requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+                data={"chat_id": TG_BACKUP_CHAT_ID, "caption": caption, "disable_notification": "true"},
+                files={"document": (fname, buf, "application/zip")},
+                timeout=60,
+            )
+            res = r.json()
+            if not res.get("ok"):
+                raise RuntimeError(str(res)[:200])
+
+            new_id = res["result"]["message_id"]
+            tg_call("pinChatMessage", {"chat_id": TG_BACKUP_CHAT_ID, "message_id": new_id, "disable_notification": True})
+            old_id = _TG_STATE.get("last_msg_id")
+            if old_id:
+                tg_call("deleteMessage", {"chat_id": TG_BACKUP_CHAT_ID, "message_id": old_id})
+            _TG_STATE["last_msg_id"] = new_id
+            _TG_STATE["last_ok"] = time.time()
+            _TG_STATE["last_err"] = ""
+            logging.info(f"✅ AUTO_BACKUP Telegram: đã gửi {fname}")
+            return True
+        except Exception as e:
+            _TG_STATE["last_err"] = str(e)[:200]
+            logging.error(f"❌ Lỗi AUTO_BACKUP Telegram: {e}")
+            with _TG_LOCK:
+                _TG_STATE["dirty"] = True
+            return False
+
+def tg_backup_async(reason="auto"):
+    Thread(target=tg_backup_send, args=(reason,), daemon=True).start()
+
+def restore_from_zip_bytes(raw, missing_only=False):
+    """Khôi phục dữ liệu từ file zip. missing_only=True: chỉ ghi file đang thiếu (dùng lúc khởi động)."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+    except Exception:
+        return False, "File không phải zip hợp lệ"
+    allowed = {os.path.basename(p) for p in _tg_files()}
+    payloads = {}
+    for name in zf.namelist():
+        base = os.path.basename(name)
+        if base not in allowed:
+            continue
+        try:
+            data = zf.read(name)
+            obj = json.loads(data.decode("utf-8"))
+        except Exception:
+            return False, f"File {base} trong zip bị lỗi"
+        if not isinstance(obj, dict):
+            return False, f"File {base} sai định dạng"
+        payloads[base] = (data, obj)
+    if not payloads:
+        return False, "Zip không chứa file dữ liệu hợp lệ"
+
+    restored = []
+    with DB_LOCK:
+        with _SAVE_PENDING_LOCK:
+            if not missing_only:
+                _SAVE_PENDING.clear()
+        for base, (data, obj) in payloads.items():
+            path = os.path.join(DB_DIR, base)
+            if missing_only and os.path.exists(path):
+                continue
+            tmp = path + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, path)
+            restored.append(base)
+            if missing_only:
+                continue
+            # Cập nhật thẳng vào bộ nhớ đang chạy
+            if base == os.path.basename(DB_FILE):
+                USERS_DB.clear(); USERS_DB.update({int(k): v for k, v in obj.items()})
+            elif base == os.path.basename(GITCODE_DB_FILE):
+                GITCODE_DB.clear(); GITCODE_DB.update(obj)
+            elif base == os.path.basename(SMS_DB_FILE):
+                SMS_DB.clear(); SMS_DB.update({int(k): v for k, v in obj.items()})
+            elif base == os.path.basename(SEPAY_TX_FILE):
+                PROCESSED_TX.clear(); PROCESSED_TX.update(obj)
+            elif base == os.path.basename(PROMO_FILE):
+                PROMO_DB.clear(); PROMO_DB.update(obj)
+            mark_dirty(path)
+    if not restored:
+        return True, "Không có file nào cần khôi phục"
+    return True, "Đã khôi phục: " + ", ".join(restored)
+
+def tg_restore_once():
+    """Lúc khởi động: nếu thiếu file dữ liệu thì tải zip đang được ghim trên Telegram về."""
+    global _TG_RESTORED
+    if _TG_RESTORED:
+        return
+    _TG_RESTORED = True
+    if not _tg_ready():
+        return
+    try:
+        try:
+            chat_id = int(TG_BACKUP_CHAT_ID)
+        except ValueError:
+            chat_id = TG_BACKUP_CHAT_ID
+        chat = tg_call("getChat", {"chat_id": chat_id}) or {}
+        doc = ((chat.get("result") or {}).get("pinned_message") or {}).get("document")
+        if not doc:
+            logging.info("AUTO_BACKUP: chưa có bản backup được ghim trên Telegram.")
+            return
+        info = tg_call("getFile", {"file_id": doc["file_id"]}) or {}
+        file_path = (info.get("result") or {}).get("file_path")
+        if not file_path:
+            logging.error(f"AUTO_BACKUP: không lấy được file backup: {info}")
+            return
+        r = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}", timeout=60)
+        r.raise_for_status()
+        ok, msg = restore_from_zip_bytes(r.content, missing_only=True)
+        logging.info(f"AUTO_BACKUP khôi phục từ Telegram: {msg}")
+    except Exception as e:
+        logging.error(f"❌ Lỗi khôi phục từ Telegram: {e}")
+
+def _tg_backup_worker():
+    while True:
+        time.sleep(10)
+        now = time.time()
+        with _TG_LOCK:
+            dirty = _TG_STATE["dirty"]
+            last = _TG_STATE["last_sent"]
+        if (dirty and now - last >= TG_BACKUP_MIN_INTERVAL) or (now - last >= TG_BACKUP_EVERY):
+            tg_backup_send("tự động")
+
+def start_tg_backup_worker():
+    if _tg_ready():
+        Thread(target=_tg_backup_worker, daemon=True).start()
+        logging.info("✅ Đã bật AUTO_BACKUP dữ liệu lên Telegram.")
+    else:
+        logging.warning("⚠️ AUTO_BACKUP Telegram chưa bật (thiếu ADMIN_CHAT_ID/BOT_TOKEN).")
+
 # Backup tự động lên một repo GitHub RIÊNG (private) để không mất dữ liệu khi Render chạy lại.
 # Biến môi trường: BACKUP_GITHUB_TOKEN, BACKUP_GITHUB_REPO (dạng user/repo), BACKUP_GITHUB_BRANCH (mặc định main)
 BACKUP_TOKEN = os.getenv("BACKUP_GITHUB_TOKEN", "")
@@ -286,7 +474,7 @@ def _gh_headers(raw=False):
 def _gh_url(name):
     return f"https://api.github.com/repos/{BACKUP_REPO}/contents/{name}"
 
-def backup_restore(path):
+def _github_restore(path):
     """Nếu file local chưa có (Render vừa deploy lại) thì tải bản backup về."""
     if not BACKUP_ENABLED or os.path.exists(path):
         return
@@ -319,6 +507,14 @@ def backup_restore(path):
     logging.critical(f"❌ Không thể khôi phục {name} từ backup ({last_err}). Dừng bot để bảo vệ dữ liệu.")
     sys.exit(1)
 
+def backup_restore(path):
+    """Khôi phục file dữ liệu: ưu tiên GitHub, nếu vẫn thiếu thì lấy từ bản backup ghim trên Telegram."""
+    if os.path.exists(path):
+        return
+    _github_restore(path)
+    if not os.path.exists(path):
+        tg_restore_once()
+
 def backup_upload(path):
     if not os.path.exists(path):
         return
@@ -347,6 +543,7 @@ def backup_upload(path):
         raise RuntimeError(f"Backup {name} lỗi HTTP {r.status_code}: {r.text[:200]}")
 
 def mark_dirty(path):
+    tg_mark_dirty()
     if BACKUP_ENABLED:
         with _BACKUP_LOCK:
             _BACKUP_DIRTY.add(path)
@@ -1237,6 +1434,7 @@ async def admin_topup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data = get_user_data(target_id)
         user_data["balance"] += amount
         save_users_db() 
+        tg_backup_async("admin cộng tiền")
         
         new_bal = user_data["balance"]
 
@@ -1407,6 +1605,7 @@ async def receive_admin_edit_user_handler(update: Update, context: ContextTypes.
     user_data = get_user_data(target_id)
     user_data["balance"] = new_balance
     save_users_db()
+    tg_backup_async("admin sửa số dư")
 
     await update.message.reply_text(
         f"✅ ĐÃ CẬP NHẬT SỐ DƯ CHO KHÁCH <code>{target_id}</code>\n"
@@ -2630,7 +2829,35 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🎉 Cài Đặt Khuyến Mãi Nạp", callback_data="admin_promo_menu")],
             [InlineKeyboardButton("📢 Tạo Thông Báo Broadcast", callback_data="admin_broadcast_menu")],
             [InlineKeyboardButton("👤 Gửi Thông Báo Riêng (Cá Nhân)", callback_data="admin_private_msg_menu")],
+            [InlineKeyboardButton("💾 AUTO_BACKUP (Telegram)", callback_data="admin_backup_menu")],
             [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+        ]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data in ("admin_backup_menu", "admin_backup_now"):
+        if not is_admin(user.id, user.username):
+            return
+        note = ""
+        if data == "admin_backup_now":
+            ok = await asyncio.to_thread(tg_backup_send, "thủ công")
+            note = "✅ <b>Đã gửi backup vào chat Telegram!</b>\n\n" if ok else \
+                   f"❌ <b>Backup thất bại:</b> {html.escape(_TG_STATE.get('last_err') or 'không rõ')}\n\n"
+        last_ok = _TG_STATE.get("last_ok", 0)
+        last_txt = time.strftime("%H:%M:%S %d/%m/%Y", time.gmtime(last_ok + 7 * 3600)) if last_ok else "chưa có"
+        state_txt = "🟢 Đang bật" if _tg_ready() else "🔴 Chưa bật"
+        text = (
+            f"💾 <b>AUTO_BACKUP DỮ LIỆU (TELEGRAM)</b>\n"
+            f"----------------------------------------\n"
+            f"{note}"
+            f"📌 <b>Trạng thái:</b> {state_txt}\n"
+            f"🕒 <b>Backup gần nhất:</b> {last_txt}\n"
+            f"👥 <b>Số khách:</b> {len(USERS_DB)}\n\n"
+            f"ℹ️ Mỗi khi cộng/sửa tiền, nạp SePay, gitcode... bot tự gửi file <code>backup_*.zip</code> và ghim trong chat này.\n"
+            f"♻️ <b>Khôi phục:</b> gửi file <code>backup_*.zip</code> cho bot (chỉ Admin), dữ liệu hiện tại sẽ bị thay bằng bản backup."
+        )
+        keyboard = [
+            [InlineKeyboardButton("📤 Backup ngay", callback_data="admin_backup_now")],
+            [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]
         ]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -3246,6 +3473,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             hist += f" | Khuyến mãi {get_promo_percent():g}%: +{bonus:,.0f}đ"
         user_data["history"].append(hist)
         save_users_db() 
+        tg_backup_async("admin duyệt nạp tiền")
         
         new_bal = user_data["balance"]
         
@@ -3417,6 +3645,26 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         return
     logging.error("Lỗi không bắt được trong bot:", exc_info=err)
 
+async def admin_restore_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin gửi file backup_*.zip cho bot -> khôi phục toàn bộ dữ liệu."""
+    user = update.effective_user
+    if not is_admin(user.id, user.username):
+        return
+    doc = update.message.document
+    if not doc or not (doc.file_name or "").lower().endswith(".zip") or not doc.file_name.startswith("backup_"):
+        return
+    try:
+        f = await context.bot.get_file(doc.file_id)
+        raw = bytes(await f.download_as_bytearray())
+        ok, msg = await asyncio.to_thread(restore_from_zip_bytes, raw, False)
+    except Exception as e:
+        ok, msg = False, str(e)
+    await update.message.reply_text(
+        ("✅ " if ok else "❌ ") + html.escape(msg),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
+    )
+
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
         print("⚠️ Vui lòng cấu hình BOT_TOKEN chính xác trước khi chạy bot!")
@@ -3424,6 +3672,7 @@ def main():
 
     global bot_app
     start_backup_worker()
+    start_tg_backup_worker()
     keep_alive()
 
     application = (
@@ -3476,6 +3725,7 @@ def main():
 
     application.add_handler(CommandHandler("topup", admin_topup_cmd))
     application.add_handler(conv_handler)
+    application.add_handler(MessageHandler(filters.Document.ALL, admin_restore_document_handler), group=1)
     application.add_error_handler(error_handler)
 
     print("🤖 Bot đang chạy...")
