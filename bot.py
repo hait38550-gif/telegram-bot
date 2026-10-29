@@ -16,6 +16,7 @@ from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.request import HTTPXRequest
 from telegram.error import BadRequest
+from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -25,7 +26,6 @@ from telegram.error import BadRequest
     ConversationHandler,
     filters,
 )
-
 # Biến toàn cục cho Bot Application (giữ lại để tương thích)
 bot_app = None
 
