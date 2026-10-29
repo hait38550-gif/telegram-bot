@@ -1273,9 +1273,9 @@ def build_qr_urls(user_id, amount, bank_idx):
         f"&amount={int(amount)}&des={user_id}",
     ]
 
-BUILD_TAG = "qr-v3"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
+BUILD_TAG = "qr-v4"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
 
-# Tạo QR ngay trong bot (không phụ thuộc vietqr.io / Telegram tải link). Cần thư viện: qrcode[pil]
+# Tạo QR ngay trong bot (không phụ thuộc vietqr.io / Telegram tải link). Cần thư viện: segno
 BANK_BINS = {"MBBank": "970422", "MB": "970422"}   # mã BIN ngân hàng theo chuẩn NAPAS
 
 def _tlv(tag, value):
@@ -1306,19 +1306,21 @@ def build_vietqr_payload(bank, amount, content):
     return payload + _crc16_ccitt(payload)
 
 def make_local_qr_png(user_id, amount, bank_idx):
-    """Vẽ ảnh QR tại chỗ. Trả bytes PNG, hoặc None nếu thiếu thư viện/không hỗ trợ ngân hàng."""
+    """Vẽ ảnh QR tại chỗ bằng thư viện segno (thuần Python, không cần Pillow).
+    Trả bytes PNG, hoặc None nếu lỗi."""
+    if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
+        bank_idx = 0
+    payload = build_vietqr_payload(BANK_ACCOUNTS[bank_idx], amount, user_id)
+    if not payload:
+        logging.warning("QR: ngân hàng chưa có mã BIN trong BANK_BINS, không tạo được QR tại chỗ")
+        return None
     try:
-        import qrcode
-        if bank_idx < 0 or bank_idx >= len(BANK_ACCOUNTS):
-            bank_idx = 0
-        payload = build_vietqr_payload(BANK_ACCOUNTS[bank_idx], amount, user_id)
-        if not payload:
-            return None
+        import segno
         buf = io.BytesIO()
-        qrcode.make(payload, border=3, box_size=10).save(buf, format="PNG")
+        segno.make(payload, error="m", micro=False).save(buf, kind="png", scale=10, border=3)
         return buf.getvalue()
     except Exception as e:
-        logging.warning(f"QR: không tạo được QR tại chỗ ({type(e).__name__}: {e})")
+        logging.warning(f"QR: không tạo được QR tại chỗ ({type(e).__name__}: {e}) - kiểm tra requirements.txt đã có segno chưa")
         return None
 
 def download_qr_image(urls, total_timeout=14):
@@ -1382,11 +1384,15 @@ async def send_topup_qr(query, context, user, amount, bank_idx):
 
     if not sent:
         # Không tạo được ảnh -> vẫn gửi thông tin chuyển khoản dạng chữ để khách không bị kẹt
-        logging.error(f"❌ Không có ảnh QR cho {user.id}: tải link lỗi, tạo tại chỗ lỗi (thiếu qrcode[pil]?), Telegram tải link lỗi -> gửi dạng chữ")
+        logging.error(f"❌ Không có ảnh QR cho {user.id}: tải link lỗi, tạo tại chỗ lỗi (thiếu segno?), Telegram tải link lỗi -> gửi dạng chữ")
         try:
             await context.bot.send_message(
                 chat_id=user.id,
-                text=caption + "\n\n⚠️ <i>Hệ thống chưa tạo được ảnh QR, bạn vui lòng chuyển khoản thủ công theo thông tin trên (đúng nội dung) - tiền vẫn được cộng tự động.</i>",
+                text=(
+                    caption
+                    + f'\n\n🔗 <a href="{html.escape(qr_url, quote=True)}">Bấm vào đây để mở mã QR</a>'
+                    + "\n⚠️ <i>Chưa hiện được ảnh QR, bạn có thể bấm link trên hoặc chuyển khoản thủ công đúng nội dung - tiền vẫn được cộng tự động.</i>"
+                ),
                 parse_mode="HTML", reply_markup=markup
             )
             sent = True
