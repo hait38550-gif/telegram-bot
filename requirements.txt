@@ -1,3 +1,5 @@
-Flask
-python-telegram-bot
+python-telegram-bot[ext]
+flask
 requests
+qrcode
+Pillow
