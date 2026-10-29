@@ -2651,7 +2651,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
 
         user_mention = get_user_mention(user)
         admin_notice = (
-            f"🔔 <b>CÓ ĐƠN ĐĂNG KÝ TÍCH XANH MỚI!</b>\
+            f"🔔 <b>CÓ ĐƠN ĐĂNG KÝ TÍCH XANH MỚI!</b>\n"
             f"----------------------------------------\n"
             f"👤 Khách: {user_mention} (ID: <code>{user.id}</code>)\n"
             f"📦 Gói: {name}\n"
