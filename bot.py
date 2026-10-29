@@ -1133,6 +1133,8 @@ def parse_bulk_topup(text):
             continue
         try:
             uid = int(parts[0])
+            if uid <= 0 or len(str(uid)) > 13:
+                raise ValueError
         except ValueError:
             errors.append(f"ID không hợp lệ: {line}")
             continue
@@ -1169,14 +1171,9 @@ async def receive_bulk_topup_handler(update: Update, context: ContextTypes.DEFAU
             f"💰 Tổng cộng: <code>{data * total_users:,.0f}đ</code>"
         )
     else:
-        valid = {uid: amt for uid, amt in data.items() if uid in USERS_DB}
+        # ID chưa có trong dữ liệu (khách cũ bị mất dữ liệu) vẫn được cộng: bot sẽ tạo lại tài khoản cho ID đó
+        valid = dict(data)
         missing = [uid for uid in data if uid not in USERS_DB]
-        if not valid:
-            await update.message.reply_text(
-                "⚠️ Không có ID nào tồn tại trong hệ thống. Vui lòng kiểm tra lại ID:",
-                reply_markup=InlineKeyboardMarkup(back_kb)
-            )
-            return INPUT_BULK_TOPUP
         context.user_data["bulk_topup"] = {"mode": "list", "entries": valid}
         lines = [f"• <code>{uid}</code>: +{amt:,.0f}đ" for uid, amt in list(valid.items())[:30]]
         if len(valid) > 30:
@@ -1188,7 +1185,7 @@ async def receive_bulk_topup_handler(update: Update, context: ContextTypes.DEFAU
 
     warn = ""
     if missing:
-        warn += f"\n\n⚠️ <b>Bỏ qua {len(missing)} ID không tồn tại:</b> " + ", ".join(f"<code>{m}</code>" for m in missing[:20])
+        warn += f"\n\n🆕 <b>{len(missing)} ID chưa có dữ liệu (sẽ được tạo lại khi cộng):</b> " + ", ".join(f"<code>{m}</code>" for m in missing[:20])
     if errors:
         warn += "\n\n⚠️ <b>Dòng lỗi (bỏ qua):</b>\n" + html.escape("\n".join(errors[:10]))
 
@@ -2977,9 +2974,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 plan = job["entries"]
             for uid, amt in plan.items():
-                if uid not in USERS_DB:
-                    continue
-                ud = get_user_data(uid)
+                ud = get_user_data(uid)  # ID chưa có sẽ được tạo mới
                 ud["balance"] += amt
                 ud["history"].append(f"Admin cộng số dư: +{amt:,.0f}đ")
                 count += 1
