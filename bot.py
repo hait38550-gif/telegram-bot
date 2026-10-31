@@ -905,10 +905,10 @@ SERVICES = {
     "fb_like": {
         "title": "👍 TĂNG LIKE BÀI VIẾT",
         "items": [
-            {"id": "fb_mc_6791_1", "name": "✨ S1 Like Việt xịn 3 cảm xúc ", "price": 145.0},
-            {"id": "fb_mc_6631_2", "name": "👆 S1 Like bấm tay vn   buff 100 trở lên", "price": 130.4},
-            {"id": "fb_mc_6683_3", "name": "🛡️ S2 Like post dự phòng", "price": 110.35},
-            {"id": "fb_mc_6683_4", "name": "⚡ S2 Like clone nhanh", "price": 90.0},
+            {"id": "fb_mc_6791_1", "name": "✨ S1 Like Việt xịn 3 cảm xúc ", "price": 155.5},
+            {"id": "fb_mc_6631_2", "name": "👆 S1 Like bấm tay vn   buff 100 trở lên", "price": 140.4},
+            {"id": "fb_mc_6683_3", "name": "🛡️ S2 Like post dự phòng", "price": 120.35},
+            {"id": "fb_mc_6683_4", "name": "⚡ S2 Like clone nhanh", "price": 100.0},
         ]
     },
     "fb_follow": {
