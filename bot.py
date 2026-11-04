@@ -16,6 +16,10 @@ import urllib.parse
 from threading import Thread
 from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+try:
+    from telegram import CopyTextButton   # cần python-telegram-bot >= 22.1
+except ImportError:
+    CopyTextButton = None
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -25,6 +29,7 @@ from telegram.ext import (
     ContextTypes,
     MessageHandler,
     ConversationHandler,
+    TypeHandler,
     filters,
 )
 
@@ -1628,6 +1633,43 @@ def get_user_mention(user):
         name = html.escape(user.first_name if user.first_name else "Khách hàng")
         return f'<a href="tg://user?id={user.id}">{name}</a>'
 
+# ==================== NÚT COPY LINK + HIỂN THỊ TELE KHÁCH ====================
+def with_copy_row(rows, link):
+    """Thêm nút 'Copy link' lên đầu bàn phím (bấm là copy, dùng được cả mobile)."""
+    rows = list(rows)
+    link = str(link or "").strip()
+    if link and CopyTextButton is not None:
+        try:
+            rows.insert(0, [InlineKeyboardButton("📋 Copy link", copy_text=CopyTextButton(text=link[:256]))])
+        except Exception:
+            pass
+    return InlineKeyboardMarkup(rows)
+
+def user_link_html(uid, info):
+    """'ID | @username' - bấm vào ID là mở trang cá nhân Telegram của khách."""
+    uname = (info.get("username") or "").strip()
+    name = (info.get("name") or "").strip()
+    href = f"https://t.me/{uname}" if uname else f"tg://user?id={uid}"
+    label = f"@{uname}" if uname else (name or "chưa rõ")
+    return f'<a href="{href}">{uid}</a> | 👤 {html.escape(label)}'
+
+async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mỗi lần khách tương tác: lưu lại username + tên để hiện trong danh sách."""
+    u = update.effective_user
+    if not u or u.is_bot:
+        return
+    uname = u.username or ""
+    name = " ".join(x for x in [u.first_name, u.last_name] if x)
+    with DB_LOCK:
+        d = get_user_data(u.id)
+        if d.get("username") != uname or d.get("name") != name or not d.get("tg_checked"):
+            d["username"] = uname
+            d["name"] = name
+            d["tg_checked"] = True
+            save_users_db()
+
+ADMIN_USERS_PER_PAGE = 30
+
 async def auto_delete_with_countdown(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, base_text: str, seconds: int = 30):
     async def countdown_task():
         current_sec = seconds
@@ -2232,10 +2274,11 @@ def build_failed_order_admin_text(key, order, status_line):
     )
 
 def build_failed_order_admin_keyboard(key):
-    return InlineKeyboardMarkup([
+    link = (PENDING_DB.get(key) or {}).get("link", "")
+    return with_copy_row([
         [InlineKeyboardButton("🔁 Chạy lại", callback_data=f"admin_retry:{key}")],
         [InlineKeyboardButton("💰 Hoàn tiền", callback_data=f"admin_refund:{key}")]
-    ])
+    ], link)
 
 async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE, cmt_type="Mặc định"):
     user = update.effective_user
@@ -2295,10 +2338,10 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"⏳ <b>STATUS: CHỜ ADMIN XỬ LÝ</b>"
         )
         cmt_order_key = add_order(user.id, selected_item.get("name"), link, quantity, total_price, "manual_wait", cmt_type=cmt_type)
-        admin_keyboard = InlineKeyboardMarkup([
+        admin_keyboard = with_copy_row([
             [InlineKeyboardButton("✅ Đã chạy xong", callback_data=f"admin_cmt_done:{user.id}:{cmt_order_key}")],
             [InlineKeyboardButton("❌ Từ chối & hoàn tiền", callback_data=f"admin_cmt_refund:{user.id}:{int(round(total_price))}:{cmt_order_key}")]
-        ])
+        ], link)
         try:
             await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
         except Exception as e:
@@ -2484,9 +2527,9 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"⏳ <b>STATUS: ĐÃ NHẬN ĐƠN ĐANG BUFF</b>"
     )
     
-    admin_keyboard = InlineKeyboardMarkup([
+    admin_keyboard = with_copy_row([
         [InlineKeyboardButton("🟢 ĐÃ NHẬN ĐƠN ĐANG BUFF", callback_data="none")]
-    ])
+    ], link)
     
     try:
         sent_admin_msg = await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
@@ -3102,7 +3145,10 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
                 try:
                     await query.edit_message_text(
                         success_admin, parse_mode="HTML",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟢 ĐÃ CHẠY LẠI - ĐANG BUFF", callback_data="none")]])
+                        reply_markup=with_copy_row(
+                            [[InlineKeyboardButton("🟢 ĐÃ CHẠY LẠI - ĐANG BUFF", callback_data="none")]],
+                            order.get("link")
+                        )
                     )
                 except BadRequest:
                     pass
@@ -3996,22 +4042,63 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["prompt_msg_id"] = msg.message_id
         return INPUT_GITCODE
 
-    elif data == "admin_list_users":
+    elif data.startswith("admin_list_users"):
         if not is_admin(user.id, user.username):
             return
-        
+        try:
+            page = int(data.split(":")[1]) if ":" in data else 0
+        except ValueError:
+            page = 0
+
+        # Khách cũ chưa lưu username -> hỏi Telegram 1 lần rồi lưu lại
+        missing = [u for u, info in USERS_DB.items() if not info.get("tg_checked")][:30]
+        if missing:
+            async def _fetch(u):
+                try:
+                    c = await context.bot.get_chat(u)
+                    nm = " ".join(x for x in [getattr(c, "first_name", None), getattr(c, "last_name", None)] if x)
+                    return u, (c.username or ""), nm
+                except Exception:
+                    return u, "", ""
+            results = await asyncio.gather(*[_fetch(u) for u in missing])
+            with DB_LOCK:
+                for u, un, nm in results:
+                    if u in USERS_DB:
+                        if un or nm:
+                            USERS_DB[u]["username"] = un
+                            USERS_DB[u]["name"] = nm
+                        USERS_DB[u]["tg_checked"] = True
+                save_users_db()
+
+        keyboard = []
         if not USERS_DB:
             text = "ℹ️ Hiện chưa có khách hàng nào sử dụng bot."
         else:
-            text = "👥 <b>DANH SÁCH KHÁCH HÀNG:</b>\n----------------------------------------\n"
-            for uid, info in USERS_DB.items():
-                text += f"• 🆔 ID: <code>{uid}</code> | 💵 Số dư: <code>{info.get('balance', 0):,.0f}đ</code>\n"
+            items = list(USERS_DB.items())
+            total = len(items)
+            pages = max(1, (total + ADMIN_USERS_PER_PAGE - 1) // ADMIN_USERS_PER_PAGE)
+            page = max(0, min(page, pages - 1))
+            text = (
+                f"👥 <b>DANH SÁCH KHÁCH HÀNG</b> ({total} khách)\n"
+                f"📄 Trang {page + 1}/{pages}\n"
+                f"----------------------------------------\n"
+            )
+            for uid, info in items[page * ADMIN_USERS_PER_PAGE:(page + 1) * ADMIN_USERS_PER_PAGE]:
+                text += f"• 🆔 {user_link_html(uid, info)} | 💵 <code>{info.get('balance', 0):,.0f}đ</code>\n"
+            nav = []
+            if page > 0:
+                nav.append(InlineKeyboardButton("⬅️ Trước", callback_data=f"admin_list_users:{page - 1}"))
+            if page < pages - 1:
+                nav.append(InlineKeyboardButton("Sau ➡️", callback_data=f"admin_list_users:{page + 1}"))
+            if nav:
+                keyboard.append(nav)
 
-        keyboard = [
-            [InlineKeyboardButton("✏️ Sửa / Xóa số dư khách", callback_data="admin_prompt_edit_balance")],
-            [InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        keyboard.append([InlineKeyboardButton("✏️ Sửa / Xóa số dư khách", callback_data="admin_prompt_edit_balance")])
+        keyboard.append([InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")])
+        await query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML", disable_web_page_preview=True
+        )
 
     elif data == "admin_prompt_edit_balance":
         if not is_admin(user.id, user.username):
@@ -4523,6 +4610,7 @@ def main():
         per_message=False
     )
 
+    application.add_handler(TypeHandler(Update, track_user), group=-1)
     application.add_handler(CommandHandler("topup", admin_topup_cmd))
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(filters.Document.ALL, admin_restore_document_handler), group=1)
