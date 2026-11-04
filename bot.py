@@ -270,6 +270,7 @@ SMS_DB_FILE = os.path.join(DB_DIR, "sms_db.json")
 SEPAY_TX_FILE = os.path.join(DB_DIR, "sepay_tx.json")
 PROMO_FILE = os.path.join(DB_DIR, "promo_db.json")
 PENDING_FILE = os.path.join(DB_DIR, "pending_orders.json")   # đơn SMM lỗi đang chờ Admin xử lý
+ORDERS_FILE = os.path.join(DB_DIR, "orders_db.json")         # toàn bộ đơn của khách (để khách xem trạng thái)
 
 # ==================== AUTO_BACKUP LÊN TELEGRAM ====================
 # Gửi file zip chứa toàn bộ dữ liệu cho Admin và GHIM lại. Khi Render chạy lại sẽ tự khôi phục từ tin ghim.
@@ -284,7 +285,7 @@ _TG_SEND_LOCK = threading.Lock()
 _TG_RESTORED = False
 
 def _tg_files():
-    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE, PENDING_FILE]
+    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE, PENDING_FILE, ORDERS_FILE]
 
 def _tg_ready():
     return bool(TG_BACKUP_ENABLED and TG_BACKUP_CHAT_ID and TG_BACKUP_CHAT_ID != "YOUR_ADMIN_CHAT_ID"
@@ -407,6 +408,8 @@ def restore_from_zip_bytes(raw, missing_only=False):
                 PROMO_DB.clear(); PROMO_DB.update(obj)
             elif base == os.path.basename(PENDING_FILE):
                 PENDING_DB.clear(); PENDING_DB.update(obj)
+            elif base == os.path.basename(ORDERS_FILE):
+                ORDERS_DB.clear(); ORDERS_DB.update(obj)
             mark_dirty(path)
     if not restored:
         return True, "Không có file nào cần khôi phục"
@@ -814,6 +817,146 @@ PENDING_DB = _pending_data if isinstance(_pending_data, dict) else {}
 
 def save_pending_db():
     _save_json(PENDING_FILE, PENDING_DB, "pending_orders")
+
+# ==================== DANH SÁCH ĐƠN CỦA KHÁCH (KHÁCH XEM ĐƯỢC TRẠNG THÁI) ====================
+_orders_data = _load_json(ORDERS_FILE, {})
+ORDERS_DB = _orders_data if isinstance(_orders_data, dict) else {}
+
+ORDER_STATUS_LABELS = {
+    "running": "🟡 Đang chạy",
+    "completed": "🟢 Hoàn thành",
+    "canceled": "🔴 Đã hủy",
+    "partial": "🟠 Hoàn thành một phần",
+    "pending_admin": "⏳ Đang chờ Admin xử lý",
+    "manual_wait": "⏳ Chờ Admin chạy (đơn bình luận)",
+    "manual_done": "🟢 Admin đã chạy xong",
+    "refunded": "💰 Đã hoàn tiền",
+}
+
+def save_orders_db():
+    _save_json(ORDERS_FILE, ORDERS_DB, "orders")
+
+def add_order(user_id, name, link, quantity, price, status, smm_order_id=None, cmt_type="Mặc định", key=None):
+    """Ghi 1 đơn mới cho khách. Trả về mã đơn nội bộ (key)."""
+    key = key or uuid.uuid4().hex[:10]
+    now = int(time.time())
+    with DB_LOCK:
+        ORDERS_DB[key] = {
+            "user_id": int(user_id),
+            "name": str(name),
+            "link": str(link),
+            "quantity": int(quantity),
+            "price": float(price),
+            "status": status,
+            "smm_order_id": smm_order_id,
+            "cmt_type": str(cmt_type),
+            "time": now,
+            "updated": now,
+        }
+        if len(ORDERS_DB) > 4000:
+            for k in sorted(ORDERS_DB, key=lambda x: ORDERS_DB[x].get("time", 0))[:500]:
+                ORDERS_DB.pop(k, None)
+        save_orders_db()
+    return key
+
+def update_order(key, **fields):
+    """Cập nhật trạng thái/thông tin đơn (bỏ qua nếu không có key)."""
+    if not key:
+        return
+    with DB_LOCK:
+        rec = ORDERS_DB.get(key)
+        if not rec:
+            return
+        rec.update(fields)
+        rec["updated"] = int(time.time())
+        save_orders_db()
+
+def map_smm_status(raw):
+    """Đổi trạng thái SMM API sang trạng thái nội bộ. Trả None nếu không nhận ra."""
+    s = str(raw or "").strip().lower()
+    if s in ("completed", "hoàn thành"):
+        return "completed"
+    if s in ("canceled", "cancelled", "hủy", "refunded"):
+        return "canceled"
+    if s == "partial":
+        return "partial"
+    if s in ("pending", "in progress", "processing", "running"):
+        return "running"
+    return None
+
+def _fmt_order_time(ts):
+    try:
+        return time.strftime("%H:%M %d/%m", time.gmtime(float(ts) + 7 * 3600))
+    except Exception:
+        return ""
+
+def refresh_running_orders_sync(user_id):
+    """Hỏi SMM API trạng thái các đơn đang chạy của khách và cập nhật (chạy ở luồng riêng)."""
+    running = [
+        (k, v) for k, v in list(ORDERS_DB.items())
+        if v.get("user_id") == user_id and v.get("status") == "running" and v.get("smm_order_id")
+    ]
+    running.sort(key=lambda kv: kv[1].get("time", 0), reverse=True)
+    for key, rec in running[:10]:
+        try:
+            res = call_smm_api("status", {"order": int(rec["smm_order_id"])})
+        except Exception:
+            continue
+        if isinstance(res, dict) and res.get("status"):
+            new_status = map_smm_status(res.get("status"))
+            if new_status and new_status != rec.get("status"):
+                update_order(key, status=new_status)
+
+ORDERS_PER_PAGE = 5
+
+def build_my_orders_view(user_id, page=0):
+    """Màn hình 'Đơn hàng của tôi': danh sách đơn + trạng thái."""
+    orders = [(k, v) for k, v in ORDERS_DB.items() if v.get("user_id") == user_id]
+    orders.sort(key=lambda kv: kv[1].get("time", 0), reverse=True)
+    total = len(orders)
+    pages = max(1, (total + ORDERS_PER_PAGE - 1) // ORDERS_PER_PAGE)
+    page = max(0, min(page, pages - 1))
+
+    if total == 0:
+        text = (
+            f"📦 <b>ĐƠN HÀNG CỦA TÔI</b>\n"
+            f"════════════════════════════════\n\n"
+            f"ℹ️ Bạn chưa có đơn hàng nào."
+        )
+    else:
+        text = (
+            f"📦 <b>ĐƠN HÀNG CỦA TÔI</b> ({total} đơn)\n"
+            f"════════════════════════════════\n"
+            f"📄 Trang {page + 1}/{pages}\n"
+        )
+        for key, o in orders[page * ORDERS_PER_PAGE:(page + 1) * ORDERS_PER_PAGE]:
+            label = ORDER_STATUS_LABELS.get(o.get("status"), "❔ Không rõ")
+            link = str(o.get("link", ""))
+            if len(link) > 70:
+                link = link[:67] + "..."
+            code = f"\n🆔 <b>Mã đơn:</b> <code>{html.escape(str(o['smm_order_id']))}</code>" if o.get("smm_order_id") else ""
+            cmt = f" ({html.escape(str(o.get('cmt_type')))})" if o.get("cmt_type") not in (None, "Mặc định") else ""
+            text += (
+                f"\n────────────────────────\n"
+                f"{label}\n"
+                f"📦 <b>Gói:</b> {html.escape(str(o.get('name')))}{cmt}\n"
+                f"🔗 <b>Link:</b> <code>{html.escape(link)}</code>\n"
+                f"📊 <b>Số lượng:</b> <code>{int(o.get('quantity', 0)):,}</code> | 💵 <code>{float(o.get('price', 0)):,.0f}đ</code>"
+                f"{code}\n"
+                f"🕒 {_fmt_order_time(o.get('time'))}\n"
+            )
+
+    keyboard = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Trước", callback_data=f"my_orders:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("Sau ➡️", callback_data=f"my_orders:{page + 1}"))
+    if nav:
+        keyboard.append(nav)
+    keyboard.append([InlineKeyboardButton("🔄 Làm mới trạng thái", callback_data=f"my_orders:{page}")])
+    keyboard.append([InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")])
+    return text, InlineKeyboardMarkup(keyboard)
 
 # ==================== KHUYẾN MÃI NẠP TIỀN (ADMIN CÀI ĐẶT) ====================
 _promo_data = _load_json(PROMO_FILE, {})
@@ -1540,6 +1683,7 @@ def main_menu_keyboard(user_id, username, first_name="bạn"):
             InlineKeyboardButton("💣 SPAM SMS AUTO", callback_data="sms_menu_main"),
             InlineKeyboardButton("🎁 NHẬP GITCODE", callback_data="menu_gitcode")
         ],
+        [InlineKeyboardButton("📦 ĐƠN HÀNG CỦA TÔI", callback_data="my_orders:0")],
         [
             InlineKeyboardButton("💳 NẠP TIỀN AUTO", callback_data="nap_tien"),
             InlineKeyboardButton("📜 LỊCH SỬ DÙNG", callback_data="view_history")
@@ -2015,7 +2159,7 @@ async def receive_quantity_handler(update: Update, context: ContextTypes.DEFAULT
     context.user_data["prompt_msg_id"] = msg.message_id
     return ConversationHandler.END
 
-async def background_order_status_checker(context: ContextTypes.DEFAULT_TYPE, order_id: int, admin_chat_id: int, admin_msg_id: int, user_id: int, user_name: str, package_name: str, link: str, quantity: int, total_price: float):
+async def background_order_status_checker(context: ContextTypes.DEFAULT_TYPE, order_id: int, admin_chat_id: int, admin_msg_id: int, user_id: int, user_name: str, package_name: str, link: str, quantity: int, total_price: float, order_key=None):
     """Tiến trình kiểm tra trạng thái đơn hàng tự động 24/7 qua SMM API cứ mỗi 1 tiếng."""
     while True:
         await asyncio.sleep(3600)  # Đợi 1 tiếng kiểm tra lại
@@ -2023,6 +2167,7 @@ async def background_order_status_checker(context: ContextTypes.DEFAULT_TYPE, or
         if res and isinstance(res, dict):
             status = res.get("status", "").lower()
             if status in ["completed", "hoàn thành"]:
+                update_order(order_key, status="completed")
                 new_admin_text = (
                     f"🔔 <b>ĐƠN HÀNG TĂNG TƯƠNG TÁC ĐÃ HOÀN THÀNH!</b>\n"
                     f"----------------------------------------\n"
@@ -2046,6 +2191,7 @@ async def background_order_status_checker(context: ContextTypes.DEFAULT_TYPE, or
                     pass
                 break
             elif status in ["canceled", "cancelled", "hủy"]:
+                update_order(order_key, status="canceled")
                 new_admin_text = (
                     f"🔔 <b>ĐƠN HÀNG TĂNG TƯƠNG TÁC ĐÃ BỊ HỦY!</b>\n"
                     f"----------------------------------------\n"
@@ -2148,15 +2294,17 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"💵 Khách đã thanh toán: {total_price:,.0f}đ\n\n"
             f"⏳ <b>STATUS: CHỜ ADMIN XỬ LÝ</b>"
         )
+        cmt_order_key = add_order(user.id, selected_item.get("name"), link, quantity, total_price, "manual_wait", cmt_type=cmt_type)
         admin_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Đã chạy xong", callback_data=f"admin_cmt_done:{user.id}")],
-            [InlineKeyboardButton("❌ Từ chối & hoàn tiền", callback_data=f"admin_cmt_refund:{user.id}:{int(round(total_price))}")]
+            [InlineKeyboardButton("✅ Đã chạy xong", callback_data=f"admin_cmt_done:{user.id}:{cmt_order_key}")],
+            [InlineKeyboardButton("❌ Từ chối & hoàn tiền", callback_data=f"admin_cmt_refund:{user.id}:{int(round(total_price))}:{cmt_order_key}")]
         ])
         try:
             await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
         except Exception as e:
             # Không gửi được cho Admin -> hoàn tiền khách để không mất đơn
             logging.error(f"❌ Không gửi được đơn cmt cho Admin: {e}")
+            update_order(cmt_order_key, status="refunded")
             with DB_LOCK:
                 user_data["balance"] += total_price
                 user_data["history"].append(f"Hoàn tiền đơn cmt lỗi: {selected_item.get('name')} | +{total_price:,.0f}đ")
@@ -2183,7 +2331,10 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"💳 <b>Số dư còn lại:</b> <code>{new_bal:,.0f}đ</code>\n\n"
             f"⏳ <i>Đơn bình luận đã được chuyển cho Admin xử lý thủ công. Bạn sẽ nhận thông báo khi hoàn thành.</i>"
         )
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📦 Xem đơn của tôi", callback_data="my_orders:0")],
+            [InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]
+        ])
         if update.callback_query:
             await update.callback_query.edit_message_text(success_text, reply_markup=reply_markup, parse_mode="HTML")
         else:
@@ -2238,6 +2389,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         with DB_LOCK:
             PENDING_DB[order_key] = order_rec
             save_pending_db()
+        add_order(user.id, selected_item.get("name"), link, quantity, total_price, "pending_admin", cmt_type=cmt_type, key=order_key)
         tg_backup_async("đơn SMM lỗi")
 
         admin_sent = False
@@ -2260,6 +2412,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
                 user_data["balance"] += total_price
                 user_data["history"].append(f"Hoàn tiền đơn lỗi: {selected_item.get('name')} | +{total_price:,.0f}đ")
             save_users_db()
+            update_order(order_key, status="refunded")
             fail_text = (
                 f"❌ <b>ĐẶT ĐƠN THẤT BẠI!</b>\n\n"
                 f"📦 <b>Gói:</b> {html.escape(str(selected_item.get('name')))}\n"
@@ -2284,7 +2437,10 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"💳 <b>Số dư còn lại:</b> <code>{new_bal:,.0f}đ</code>\n\n"
             f"🛠️ <i>Đơn đang được Admin kiểm tra và xử lý, bạn sẽ nhận thông báo ngay khi đơn được chạy.</i>"
         )
-        wait_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+        wait_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📦 Xem đơn của tôi", callback_data="my_orders:0")],
+            [InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]
+        ])
         if update.callback_query:
             await update.callback_query.edit_message_text(wait_text, reply_markup=wait_markup, parse_mode="HTML")
         else:
@@ -2302,7 +2458,11 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"💳 <b>Số dư còn lại:</b> <code>{new_bal:,.0f}đ</code>\n\n"
         f"⏳ <i>Đơn hàng đã được tự động đẩy lên hệ thống SMM thành công.</i>"
     )
-    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+    auto_order_key = add_order(user.id, selected_item.get("name"), link, quantity, total_price, "running", smm_order_id=smm_order_id, cmt_type=cmt_type)
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 Xem đơn của tôi", callback_data="my_orders:0")],
+        [InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]
+    ])
 
     if update.callback_query:
         await update.callback_query.edit_message_text(success_text, reply_markup=reply_markup, parse_mode="HTML")
@@ -2333,7 +2493,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         if smm_order_id != "Không rõ":
             asyncio.create_task(background_order_status_checker(
                 context, int(smm_order_id), int(ADMIN_CHAT_ID), sent_admin_msg.message_id, 
-                user.id, user_mention, selected_item.get('name'), link, quantity, total_price
+                user.id, user_mention, selected_item.get('name'), link, quantity, total_price, auto_order_key
             ))
     except Exception:
         pass
@@ -2827,6 +2987,21 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         await process_final_order(update, context, "Mặc định")
         return
 
+    elif data.startswith("my_orders"):
+        # Khách xem danh sách đơn + trạng thái (tự cập nhật trạng thái đơn đang chạy)
+        try:
+            page = int(data.split(":")[1]) if ":" in data else 0
+        except ValueError:
+            page = 0
+        try:
+            await query.edit_message_text("⏳ <b>Đang cập nhật trạng thái đơn hàng...</b>", parse_mode="HTML")
+        except BadRequest:
+            pass
+        await asyncio.to_thread(refresh_running_orders_sync, user.id)
+        text, markup = build_my_orders_view(user.id, page)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+        return
+
     elif data == "reselect_qty":
         # Khách bấm "Chọn lại số lượng" -> nhập lại số lượng (giữ nguyên link + gói)
         selected_item = context.user_data.get("buying_service")
@@ -2904,6 +3079,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
                         pass
                     return
 
+                update_order(order_key, status="running", smm_order_id=new_id)
                 with DB_LOCK:
                     PENDING_DB.pop(order_key, None)
                     save_pending_db()
@@ -2942,7 +3118,8 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
                             f"🆔 <b>Mã đơn hệ thống (ID):</b> <code>{new_id}</code>\n\n"
                             f"⏳ <i>Đơn hàng đang được tiến hành tăng tương tác.</i>"
                         ),
-                        parse_mode="HTML"
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📦 Xem đơn của tôi", callback_data="my_orders:0")]])
                     )
                 except Exception:
                     pass
@@ -2951,7 +3128,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
                     asyncio.create_task(background_order_status_checker(
                         context, int(new_id), query.message.chat_id, query.message.message_id,
                         target_uid, order.get("mention", ""), order.get("name"), order.get("link"),
-                        int(order.get("quantity", 0)), float(order.get("price", 0))
+                        int(order.get("quantity", 0)), float(order.get("price", 0)), order_key
                     ))
                 except Exception:
                     pass
@@ -2967,6 +3144,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
                     new_bal = target_data["balance"]
                     PENDING_DB.pop(order_key, None)
                     save_pending_db()
+                update_order(order_key, status="refunded")
                 tg_backup_async("admin hoàn tiền đơn lỗi")
 
                 try:
@@ -3521,7 +3699,10 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         if msg_key in done_msgs:
             return
         done_msgs.add(msg_key)
-        target_uid = int(data.split(":")[1])
+        parts_done = data.split(":")
+        target_uid = int(parts_done[1])
+        if len(parts_done) > 2:
+            update_order(parts_done[2], status="manual_done")
         try:
             await query.edit_message_text(
                 f"{query.message.text_html}\n\n✅ <b>ADMIN ĐÃ CHẠY XONG ĐƠN</b>",
@@ -3547,7 +3728,10 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         if msg_key in done_msgs:
             return
         done_msgs.add(msg_key)
-        _, uid_str, amt_str = data.split(":")
+        parts_ref = data.split(":")
+        uid_str, amt_str = parts_ref[1], parts_ref[2]
+        if len(parts_ref) > 3:
+            update_order(parts_ref[3], status="refunded")
         target_uid, refund_amt = int(uid_str), float(amt_str)
         with DB_LOCK:
             target_data = get_user_data(target_uid)
