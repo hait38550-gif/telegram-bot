@@ -13,6 +13,7 @@ import zipfile
 import io
 import uuid
 import urllib.parse
+import contextvars
 from threading import Thread
 from flask import Flask, request, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
@@ -27,6 +28,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    ExtBot,
     MessageHandler,
     ConversationHandler,
     TypeHandler,
@@ -49,14 +51,22 @@ def home():
 # ==================== GỌI TELEGRAM API ĐỒNG BỘ (DÙNG CHO WEBHOOK) ====================
 # Webhook chạy ở luồng Flask riêng, không dùng chung event loop với bot,
 # nên gửi thông báo bằng HTTP trực tiếp tới Telegram để luôn gửi được.
-def tg_call(method, payload):
+def tg_call(method, payload, bump=True):
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
             json=payload,
             timeout=15
         )
-        return r.json()
+        res = r.json()
+        # Có tin mới gửi cho Admin -> đẩy menu xuống cuối
+        if bump and method in ("sendMessage", "sendDocument", "sendPhoto", "sendVideo"):
+            try:
+                if str(payload.get("chat_id")) == str(ADMIN_CHAT_ID):
+                    schedule_admin_menu_bump()
+            except Exception:
+                pass
+        return res
     except Exception as e:
         logging.error(f"❌ Lỗi gọi Telegram API ({method}): {e}")
         return None
@@ -350,6 +360,8 @@ def tg_backup_send(reason="auto"):
             _TG_STATE["last_ok"] = time.time()
             _TG_STATE["last_err"] = ""
             logging.info(f"✅ AUTO_BACKUP Telegram: đã gửi {fname}")
+            if str(TG_BACKUP_CHAT_ID) == str(ADMIN_CHAT_ID):
+                schedule_admin_menu_bump(3.0)   # sau tin "đã ghim file" thì đưa menu xuống cuối
             return True
         except Exception as e:
             _TG_STATE["last_err"] = str(e)[:200]
@@ -1440,7 +1452,7 @@ def build_topup_qr(user_id, amount, bank_idx):
     )
     return qr_url, caption
 
-BUILD_TAG = "qr-v7-confirm-retry"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
+BUILD_TAG = "qr-v8-admin-menu-bottom"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
 BANK_BINS = {"MBBank": "970422", "MB": "970422"}   # mã BIN ngân hàng (vietqr.io nhận cả tên và BIN)
 
 def build_qr_urls(user_id, amount, bank_idx):
@@ -1658,6 +1670,8 @@ async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     if not u or u.is_bot:
         return
+    # Đánh dấu: update này do chính Admin thao tác (không đẩy menu khi Admin tự bấm)
+    IN_ADMIN_UPDATE.set(bool(is_admin(u.id, u.username)))
     uname = u.username or ""
     name = " ".join(x for x in [u.first_name, u.last_name] if x)
     with DB_LOCK:
@@ -1897,7 +1911,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     get_user_data(user.id)
         
     text, reply_markup = main_menu_keyboard(user.id, user.username, user.first_name)
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
+    sent = await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
+    if is_admin(user.id, user.username):
+        ADMIN_MENU["msg_id"] = sent.message_id
     return ConversationHandler.END
 
 async def admin_topup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2344,6 +2360,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         ], link)
         try:
             await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
+            schedule_admin_menu_bump()   # đẩy menu Admin xuống dưới thông báo đơn
         except Exception as e:
             # Không gửi được cho Admin -> hoàn tiền khách để không mất đơn
             logging.error(f"❌ Không gửi được đơn cmt cho Admin: {e}")
@@ -2444,6 +2461,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
                 reply_markup=build_failed_order_admin_keyboard(order_key)
             )
             admin_sent = True
+            schedule_admin_menu_bump()   # đẩy menu Admin xuống dưới thông báo đơn lỗi
         except Exception as e:
             logging.error(f"❌ Không gửi được đơn lỗi cho Admin: {e}")
 
@@ -2533,6 +2551,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         sent_admin_msg = await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
+        schedule_admin_menu_bump()   # đẩy menu Admin xuống dưới thông báo đơn
         if smm_order_id != "Không rõ":
             asyncio.create_task(background_order_status_checker(
                 context, int(smm_order_id), int(ADMIN_CHAT_ID), sent_admin_msg.message_id, 
@@ -2637,6 +2656,7 @@ async def receive_bot_requirements_handler(update: Update, context: ContextTypes
     ])
     try:
         await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
+        schedule_admin_menu_bump()
     except Exception:
         pass
 
@@ -3343,6 +3363,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         ])
         try:
             await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML", reply_markup=admin_keyboard)
+            schedule_admin_menu_bump()
         except Exception:
             pass
 
@@ -3422,6 +3443,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             try:
                 await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML")
+                schedule_admin_menu_bump()
             except Exception:
                 pass
         else:
@@ -4002,9 +4024,13 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         text, reply_markup = main_menu_keyboard(user.id, user.username, user.first_name)
         if query.message.photo or query.message.video:
             await query.message.delete()
-            await query.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            new_msg = await query.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            if is_admin(user.id, user.username):
+                ADMIN_MENU["msg_id"] = new_msg.message_id
         else:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=reply_markup)
+            if is_admin(user.id, user.username):
+                ADMIN_MENU["msg_id"] = query.message.message_id
 
     elif data == "cat_fb":
         text, reply_markup = fb_menu_keyboard()
@@ -4338,6 +4364,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         ])
         try:
             await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_notice, parse_mode="HTML", reply_markup=btn)
+            schedule_admin_menu_bump()
         except Exception:
             pass
 
@@ -4551,6 +4578,67 @@ async def admin_restore_document_handler(update: Update, context: ContextTypes.D
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
     )
 
+# ==================== MENU ADMIN LUÔN Ở CUỐI CHAT ====================
+# Khi có tin nhắn khác gửi cho Admin (đơn mới, backup, thông báo...), bot gửi menu mới
+# xuống dưới cùng rồi xóa menu cũ. Gộp nhiều tin liên tiếp thành 1 lần (chờ 2 giây).
+ADMIN_MENU = {"msg_id": None}
+_ADMIN_BUMP_LOCK = threading.Lock()
+_ADMIN_BUMP_TIMER = None
+IN_ADMIN_UPDATE = contextvars.ContextVar("in_admin_update", default=False)
+
+def schedule_admin_menu_bump(delay=2.0):
+    global _ADMIN_BUMP_TIMER
+    if not ADMIN_CHAT_ID or str(ADMIN_CHAT_ID) == "YOUR_ADMIN_CHAT_ID":
+        return
+    with _ADMIN_BUMP_LOCK:
+        if _ADMIN_BUMP_TIMER:
+            _ADMIN_BUMP_TIMER.cancel()
+        t = threading.Timer(delay, _do_admin_menu_bump)
+        t.daemon = True
+        _ADMIN_BUMP_TIMER = t
+        t.start()
+
+def _do_admin_menu_bump():
+    try:
+        admin_id = int(ADMIN_CHAT_ID)
+        info = USERS_DB.get(admin_id, {})
+        first_name = info.get("name") or "Admin"
+        text, markup = main_menu_keyboard(admin_id, ADMIN_USERNAME.replace("@", ""), first_name)
+        res = tg_call("sendMessage", {
+            "chat_id": admin_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "reply_markup": markup.to_dict(),
+        }, bump=False)
+        if res and res.get("ok"):
+            old_id = ADMIN_MENU.get("msg_id")
+            ADMIN_MENU["msg_id"] = res["result"]["message_id"]
+            if old_id:
+                tg_call("deleteMessage", {"chat_id": admin_id, "message_id": old_id}, bump=False)
+        else:
+            logging.error(f"❌ Không gửi được menu Admin: {res}")
+    except Exception as e:
+        logging.error(f"❌ Lỗi đẩy menu Admin xuống cuối: {e}")
+
+def install_admin_menu_hook():
+    """Bọc các hàm gửi tin của bot: hễ gửi tin cho Admin (không phải do chính Admin đang bấm) thì đẩy menu xuống."""
+    for name in ("send_message", "send_photo", "send_video", "send_document"):
+        orig = getattr(ExtBot, name)
+
+        def make(orig):
+            async def wrapper(self, *args, **kwargs):
+                res = await orig(self, *args, **kwargs)
+                try:
+                    cid = kwargs.get("chat_id", args[0] if args else None)
+                    if cid is not None and str(cid) == str(ADMIN_CHAT_ID) and not IN_ADMIN_UPDATE.get():
+                        schedule_admin_menu_bump()
+                except Exception:
+                    pass
+                return res
+            return wrapper
+
+        setattr(ExtBot, name, make(orig))
+
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
         print("⚠️ Vui lòng cấu hình BOT_TOKEN chính xác trước khi chạy bot!")
@@ -4573,6 +4661,7 @@ def main():
         .build()
     )
     bot_app = application
+    install_admin_menu_hook()
 
     conv_handler = ConversationHandler(
         entry_points=[
