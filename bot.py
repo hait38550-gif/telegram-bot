@@ -11,6 +11,7 @@ import sys
 import threading
 import zipfile
 import io
+import uuid
 import urllib.parse
 from threading import Thread
 from flask import Flask, request, jsonify
@@ -268,6 +269,7 @@ GITCODE_DB_FILE = os.path.join(DB_DIR, "gitcode_db.json")
 SMS_DB_FILE = os.path.join(DB_DIR, "sms_db.json")
 SEPAY_TX_FILE = os.path.join(DB_DIR, "sepay_tx.json")
 PROMO_FILE = os.path.join(DB_DIR, "promo_db.json")
+PENDING_FILE = os.path.join(DB_DIR, "pending_orders.json")   # đơn SMM lỗi đang chờ Admin xử lý
 
 # ==================== AUTO_BACKUP LÊN TELEGRAM ====================
 # Gửi file zip chứa toàn bộ dữ liệu cho Admin và GHIM lại. Khi Render chạy lại sẽ tự khôi phục từ tin ghim.
@@ -282,7 +284,7 @@ _TG_SEND_LOCK = threading.Lock()
 _TG_RESTORED = False
 
 def _tg_files():
-    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE]
+    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE, PENDING_FILE]
 
 def _tg_ready():
     return bool(TG_BACKUP_ENABLED and TG_BACKUP_CHAT_ID and TG_BACKUP_CHAT_ID != "YOUR_ADMIN_CHAT_ID"
@@ -403,6 +405,8 @@ def restore_from_zip_bytes(raw, missing_only=False):
                 PROCESSED_TX.clear(); PROCESSED_TX.update(obj)
             elif base == os.path.basename(PROMO_FILE):
                 PROMO_DB.clear(); PROMO_DB.update(obj)
+            elif base == os.path.basename(PENDING_FILE):
+                PENDING_DB.clear(); PENDING_DB.update(obj)
             mark_dirty(path)
     if not restored:
         return True, "Không có file nào cần khôi phục"
@@ -685,6 +689,27 @@ def call_smm_api(action, data=None):
         logging.error(f"Lỗi kết nối SMM API ({action}): {e}")
         return None
 
+def build_smm_payload(item_id, service_id, link, quantity):
+    """Dữ liệu gửi lên SMM API khi đặt đơn (dùng cho cả đặt đơn lần đầu và chạy lại)."""
+    payload = {
+        "service": service_id,
+        "link": link,
+        "quantity": quantity
+    }
+    if "like" in (item_id or ""):
+        payload["comments"] = "👍, ❤️, 😆"
+    return payload
+
+def extract_smm_error(smm_res):
+    """Lấy nội dung lỗi dễ đọc từ phản hồi của SMM API."""
+    if smm_res is None:
+        return "Không kết nối được SMM API (timeout/mạng)"
+    if isinstance(smm_res, dict):
+        if smm_res.get("error"):
+            return str(smm_res.get("error"))[:300]
+        return str(smm_res)[:300]
+    return str(smm_res)[:300]
+
 def _load_json(path, default):
     backup_restore(path)
     if os.path.exists(path):
@@ -782,6 +807,13 @@ SMS_DB = load_sms_db()
 # Danh sách mã giao dịch SePay đã xử lý (chống cộng tiền 2 lần)
 _tx_data = _load_json(SEPAY_TX_FILE, {})
 PROCESSED_TX = _tx_data if isinstance(_tx_data, dict) else {}
+
+# ==================== ĐƠN SMM LỖI CHỜ ADMIN XỬ LÝ (CHẠY LẠI / HOÀN TIỀN) ====================
+_pending_data = _load_json(PENDING_FILE, {})
+PENDING_DB = _pending_data if isinstance(_pending_data, dict) else {}
+
+def save_pending_db():
+    _save_json(PENDING_FILE, PENDING_DB, "pending_orders")
 
 # ==================== KHUYẾN MÃI NẠP TIỀN (ADMIN CÀI ĐẶT) ====================
 _promo_data = _load_json(PROMO_FILE, {})
@@ -1260,7 +1292,7 @@ def build_topup_qr(user_id, amount, bank_idx):
     )
     return qr_url, caption
 
-BUILD_TAG = "qr-v6"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
+BUILD_TAG = "qr-v7-confirm-retry"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
 BANK_BINS = {"MBBank": "970422", "MB": "970422"}   # mã BIN ngân hàng (vietqr.io nhận cả tên và BIN)
 
 def build_qr_urls(user_id, amount, bank_idx):
@@ -1915,6 +1947,31 @@ async def receive_link_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["prompt_msg_id"] = msg.message_id
     return INPUT_QUANTITY
 
+def build_order_confirm_text(context):
+    """Màn hình xác nhận đơn: link + gói + số lượng + tiền (khách kiểm tra lại trước khi chạy)."""
+    selected_item = context.user_data.get("buying_service", {})
+    link = context.user_data.get("order_link", "")
+    quantity = context.user_data.get("order_quantity", 0)
+    price_per_unit = float(selected_item.get("price", 0))
+    total_price = float(quantity) * price_per_unit
+    return (
+        f"🧾 <b>XÁC NHẬN ĐƠN HÀNG</b>\n"
+        f"════════════════════════════════\n"
+        f"📦 <b>Gói đã chọn:</b> {html.escape(str(selected_item.get('name', 'Dịch vụ')))}\n"
+        f"🔗 <b>Link:</b> <code>{html.escape(str(link))}</code>\n"
+        f"📊 <b>Số lượng:</b> <code>{quantity:,}</code>\n"
+        f"💲 <b>Đơn giá:</b> <code>{price_per_unit:g}đ</code> / lượt\n"
+        f"💵 <b>Tổng thanh toán:</b> <code>{total_price:,.0f}đ</code>\n\n"
+        f"⚠️ <i>Vui lòng kiểm tra kỹ link và số lượng. Bấm \"Đồng ý chạy\" là hệ thống sẽ trừ tiền và chạy đơn ngay.</i>"
+    )
+
+def build_order_confirm_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Đồng ý chạy", callback_data="confirm_order")],
+        [InlineKeyboardButton("🔢 Chọn lại số lượng", callback_data="reselect_qty")],
+        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+    ])
+
 async def receive_quantity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     qty_text = update.message.text.strip()
     
@@ -1947,27 +2004,16 @@ async def receive_quantity_handler(update: Update, context: ContextTypes.DEFAULT
         return INPUT_QUANTITY
 
     context.user_data["order_quantity"] = quantity
-    cat_key = context.user_data.get("current_cat_key", "")
+    context.user_data["order_pending"] = True   # đang chờ khách bấm "Đồng ý chạy"
 
-    if cat_key in ["fb_cmt", "tt_cmt"]:
-        text = (
-            f"📊 <b>Số lượng:</b> {quantity:,}\n\n"
-            f"👇 <i>Vui lòng chọn phong cách bình luận:</i> "
-        )
-        keyboard = [
-            [
-                InlineKeyboardButton("💬 Bình luận Khen", callback_data="cmt_type:Khen"),
-                InlineKeyboardButton("💬 Bình luận Chê", callback_data="cmt_type:Chê")
-            ],
-            [
-                InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
-            ]
-        ]
-        msg = await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-        context.user_data["prompt_msg_id"] = msg.message_id
-        return ConversationHandler.END
-    else:
-        return await process_final_order(update, context, "Mặc định")
+    # Hiện màn hình xác nhận để khách kiểm tra link + gói + số lượng trước khi chạy
+    msg = await update.message.reply_text(
+        build_order_confirm_text(context),
+        parse_mode="HTML",
+        reply_markup=build_order_confirm_keyboard()
+    )
+    context.user_data["prompt_msg_id"] = msg.message_id
+    return ConversationHandler.END
 
 async def background_order_status_checker(context: ContextTypes.DEFAULT_TYPE, order_id: int, admin_chat_id: int, admin_msg_id: int, user_id: int, user_name: str, package_name: str, link: str, quantity: int, total_price: float):
     """Tiến trình kiểm tra trạng thái đơn hàng tự động 24/7 qua SMM API cứ mỗi 1 tiếng."""
@@ -2022,6 +2068,28 @@ async def background_order_status_checker(context: ContextTypes.DEFAULT_TYPE, or
                 except Exception:
                     pass
                 break
+
+def build_failed_order_admin_text(key, order, status_line):
+    """Nội dung tin nhắn báo Admin về đơn SMM bị lỗi."""
+    return (
+        f"⚠️ <b>ĐƠN SMM LỖI - CẦN ADMIN XỬ LÝ</b>\n"
+        f"----------------------------------------\n"
+        f"👤 Khách hàng: {order.get('mention', '')} (ID: <code>{order.get('user_id')}</code>)\n"
+        f"📦 Gói: {html.escape(str(order.get('name')))}\n"
+        f"🆔 Mã dịch vụ SMM: <code>{order.get('service_id')}</code>\n"
+        f"🔗 Link: <code>{html.escape(str(order.get('link')))}</code>\n"
+        f"📊 Số lượng: {int(order.get('quantity', 0)):,}\n"
+        f"💵 Khách đã bị trừ: {float(order.get('price', 0)):,.0f}đ\n"
+        f"❌ Lỗi: <code>{html.escape(str(order.get('error', 'Không rõ')))}</code>\n"
+        f"🔖 Mã xử lý: <code>{key}</code>\n\n"
+        f"{status_line}"
+    )
+
+def build_failed_order_admin_keyboard(key):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔁 Chạy lại", callback_data=f"admin_retry:{key}")],
+        [InlineKeyboardButton("💰 Hoàn tiền", callback_data=f"admin_refund:{key}")]
+    ])
 
 async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE, cmt_type="Mặc định"):
     user = update.effective_user
@@ -2125,14 +2193,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN =================
     smm_service_id = get_smm_service_id(item_id_str) or 6683
 
-    payload_data = {
-        "service": smm_service_id,
-        "link": link,
-        "quantity": quantity
-    }
-
-    if "like" in item_id_str:
-        payload_data["comments"] = "👍, ❤️, 😆"
+    payload_data = build_smm_payload(item_id_str, smm_service_id, link, quantity)
 
     # Báo khách biết bot đang xử lý (API có thể chậm vài giây)
     processing_msg = None
@@ -2158,41 +2219,76 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         smm_order_id = smm_res.get("order")
 
     if smm_order_id is None:
-        # Đặt đơn thất bại -> hoàn tiền lại cho khách
+        # ===== ĐƠN LỖI: KHÔNG báo lỗi cho khách, báo về Admin kèm 2 nút "Chạy lại" / "Hoàn tiền" =====
+        user_mention_f = get_user_mention(user)
+        order_key = uuid.uuid4().hex[:10]
+        order_rec = {
+            "user_id": user.id,
+            "mention": user_mention_f,
+            "item_id": item_id_str,
+            "service_id": smm_service_id,
+            "name": str(selected_item.get("name")),
+            "link": str(link),
+            "quantity": int(quantity),
+            "price": float(total_price),
+            "cmt_type": str(cmt_type),
+            "error": extract_smm_error(smm_res),
+            "time": int(time.time()),
+        }
         with DB_LOCK:
-            user_data["balance"] += total_price
-            user_data["history"].append(f"Hoàn tiền đơn lỗi: {selected_item.get('name')} | +{total_price:,.0f}đ")
-        save_users_db()
+            PENDING_DB[order_key] = order_rec
+            save_pending_db()
+        tg_backup_async("đơn SMM lỗi")
 
-        err_msg = ""
-        if isinstance(smm_res, dict) and smm_res.get("error"):
-            err_msg = f"\n📝 <b>Chi tiết:</b> {html.escape(str(smm_res.get('error')))}"
-        fail_text = (
-            f"❌ <b>ĐẶT ĐƠN THẤT BẠI!</b>\n\n"
-            f"📦 <b>Gói:</b> {html.escape(str(selected_item.get('name')))}\n"
-            f"💵 Đã hoàn lại <code>{total_price:,.0f}đ</code> vào số dư.\n"
-            f"💳 <b>Số dư hiện tại:</b> <code>{user_data['balance']:,.0f}đ</code>{err_msg}\n\n"
-            f"⚠️ <i>Vui lòng thử lại sau hoặc liên hệ Admin.</i>"
-        )
-        fail_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
-        if update.callback_query:
-            await update.callback_query.edit_message_text(fail_text, reply_markup=fail_markup, parse_mode="HTML")
-        else:
-            await update.message.reply_text(fail_text, reply_markup=fail_markup, parse_mode="HTML")
+        admin_sent = False
         try:
             await context.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=(
-                    f"⚠️ <b>ĐƠN SMM LỖI - ĐÃ HOÀN TIỀN</b>\n"
-                    f"👤 Khách ID: <code>{user.id}</code>\n"
-                    f"📦 Gói: {html.escape(str(selected_item.get('name')))}\n"
-                    f"🔗 Link: <code>{html.escape(str(link))}</code>\n"
-                    f"📊 SL: {quantity:,} | 💵 {total_price:,.0f}đ{err_msg}"
-                ),
-                parse_mode="HTML"
+                chat_id=int(ADMIN_CHAT_ID),
+                text=build_failed_order_admin_text(order_key, order_rec, "⏳ <b>STATUS: CHỜ ADMIN CHẠY LẠI / HOÀN TIỀN</b>"),
+                parse_mode="HTML",
+                reply_markup=build_failed_order_admin_keyboard(order_key)
             )
-        except Exception:
-            pass
+            admin_sent = True
+        except Exception as e:
+            logging.error(f"❌ Không gửi được đơn lỗi cho Admin: {e}")
+
+        if not admin_sent:
+            # Admin không nhận được thông báo -> hoàn tiền khách để không bị mất tiền oan
+            with DB_LOCK:
+                PENDING_DB.pop(order_key, None)
+                save_pending_db()
+                user_data["balance"] += total_price
+                user_data["history"].append(f"Hoàn tiền đơn lỗi: {selected_item.get('name')} | +{total_price:,.0f}đ")
+            save_users_db()
+            fail_text = (
+                f"❌ <b>ĐẶT ĐƠN THẤT BẠI!</b>\n\n"
+                f"📦 <b>Gói:</b> {html.escape(str(selected_item.get('name')))}\n"
+                f"💵 Đã hoàn lại <code>{total_price:,.0f}đ</code> vào số dư.\n"
+                f"💳 <b>Số dư hiện tại:</b> <code>{user_data['balance']:,.0f}đ</code>\n\n"
+                f"⚠️ <i>Vui lòng thử lại sau hoặc liên hệ Admin.</i>"
+            )
+            fail_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+            if update.callback_query:
+                await update.callback_query.edit_message_text(fail_text, reply_markup=fail_markup, parse_mode="HTML")
+            else:
+                await update.message.reply_text(fail_text, reply_markup=fail_markup, parse_mode="HTML")
+            return ConversationHandler.END
+
+        # Khách chỉ thấy đơn đang được xử lý (không báo lỗi)
+        wait_text = (
+            f"⏳ <b>ĐƠN HÀNG ĐÃ ĐƯỢC GHI NHẬN!</b>\n\n"
+            f"📦 <b>Gói:</b> {html.escape(str(selected_item.get('name')))}\n"
+            f"🔗 <b>Link:</b> <code>{html.escape(str(link))}</code>\n"
+            f"📊 <b>Số lượng:</b> <code>{quantity:,}</code>\n"
+            f"💵 <b>Thanh toán:</b> <code>{total_price:,.0f}đ</code>\n"
+            f"💳 <b>Số dư còn lại:</b> <code>{new_bal:,.0f}đ</code>\n\n"
+            f"🛠️ <i>Đơn đang được Admin kiểm tra và xử lý, bạn sẽ nhận thông báo ngay khi đơn được chạy.</i>"
+        )
+        wait_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Về Menu Chính", callback_data="menu_main")]])
+        if update.callback_query:
+            await update.callback_query.edit_message_text(wait_text, reply_markup=wait_markup, parse_mode="HTML")
+        else:
+            await update.message.reply_text(wait_text, reply_markup=wait_markup, parse_mode="HTML")
         return ConversationHandler.END
 
     success_text = (
@@ -2692,8 +2788,212 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
     get_user_data(user.id)
 
     if data.startswith("cmt_type:"):
+        # Chống bấm đúp: mỗi lần chọn phong cách chỉ chạy 1 đơn
+        if not context.user_data.pop("cmt_style_pending", False):
+            return
         cmt_type = data.split(":")[1]
         await process_final_order(update, context, cmt_type)
+        return
+
+    elif data == "confirm_order":
+        # Khách bấm "Đồng ý chạy" ở màn hình xác nhận
+        if not context.user_data.pop("order_pending", False):
+            return   # đã bấm rồi hoặc phiên cũ -> bỏ qua để không chạy trùng đơn
+        if not context.user_data.get("buying_service") or not context.user_data.get("order_link"):
+            await query.edit_message_text(
+                "⚠️ Phiên đặt đơn đã hết hạn, vui lòng chọn lại dịch vụ.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]])
+            )
+            return
+        cat_key = context.user_data.get("current_cat_key", "")
+        if cat_key in ["fb_cmt", "tt_cmt"]:
+            quantity = context.user_data.get("order_quantity", 0)
+            context.user_data["cmt_style_pending"] = True
+            text = (
+                f"📊 <b>Số lượng:</b> {quantity:,}\n\n"
+                f"👇 <i>Vui lòng chọn phong cách bình luận:</i> "
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton("💬 Bình luận Khen", callback_data="cmt_type:Khen"),
+                    InlineKeyboardButton("💬 Bình luận Chê", callback_data="cmt_type:Chê")
+                ],
+                [
+                    InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
+                ]
+            ]
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        await process_final_order(update, context, "Mặc định")
+        return
+
+    elif data == "reselect_qty":
+        # Khách bấm "Chọn lại số lượng" -> nhập lại số lượng (giữ nguyên link + gói)
+        selected_item = context.user_data.get("buying_service")
+        link = context.user_data.get("order_link")
+        if not selected_item or not link:
+            await query.edit_message_text(
+                "⚠️ Phiên đặt đơn đã hết hạn, vui lòng chọn lại dịch vụ.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]])
+            )
+            return
+        context.user_data["order_pending"] = False
+        cat_key = context.user_data.get("current_cat_key", "fb_like")
+        text = (
+            f"🔗 <b>LINK TƯƠNG TÁC:</b>\n<code>{html.escape(str(link))}</code>\n\n"
+            f"📦 <b>Gói dịch vụ chọn:</b> {html.escape(str(selected_item.get('name', 'Dịch vụ')))}\n\n"
+            f"🔢 <i>Vui lòng nhập lại số lượng cần mua (Ví dụ: 100, 500, 1000):</i>"
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("↩️ Chọn lại gói", callback_data=f"subcat_{cat_key}"),
+                InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")
+            ]
+        ]
+        msg = await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        context.user_data["prompt_msg_id"] = msg.message_id
+        return INPUT_QUANTITY
+
+    elif data.startswith("admin_retry:") or data.startswith("admin_refund:"):
+        if not is_admin(user.id, user.username):
+            return
+        action, order_key = data.split(":", 1)
+        busy = context.bot_data.setdefault("busy_orders", set())
+        if order_key in busy:
+            return   # đang xử lý, tránh bấm đúp
+        order = PENDING_DB.get(order_key)
+        if not order:
+            try:
+                await query.edit_message_text(
+                    f"{query.message.text_html}\n\nℹ️ <b>Đơn này đã được xử lý rồi.</b>",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✔️ ĐÃ XỬ LÝ", callback_data="none")]])
+                )
+            except BadRequest:
+                pass
+            return
+
+        busy.add(order_key)
+        try:
+            target_uid = int(order["user_id"])
+            if action == "admin_retry":
+                # ===== CHẠY LẠI: dùng đúng link + số lượng + gói khách đã chọn =====
+                try:
+                    await query.edit_message_text(
+                        build_failed_order_admin_text(order_key, order, "⏳ <b>ĐANG CHẠY LẠI ĐƠN...</b>"),
+                        parse_mode="HTML"
+                    )
+                except BadRequest:
+                    pass
+
+                payload = build_smm_payload(order.get("item_id"), order.get("service_id"), order.get("link"), order.get("quantity"))
+                res = await asyncio.to_thread(call_smm_api, "add", payload)
+                new_id = res.get("order") if isinstance(res, dict) else None
+
+                if new_id is None:
+                    order["error"] = extract_smm_error(res)
+                    with DB_LOCK:
+                        save_pending_db()
+                    try:
+                        await query.edit_message_text(
+                            build_failed_order_admin_text(order_key, order, "❌ <b>CHẠY LẠI THẤT BẠI - CHỌN CHẠY LẠI HOẶC HOÀN TIỀN</b>"),
+                            parse_mode="HTML",
+                            reply_markup=build_failed_order_admin_keyboard(order_key)
+                        )
+                    except BadRequest:
+                        pass
+                    return
+
+                with DB_LOCK:
+                    PENDING_DB.pop(order_key, None)
+                    save_pending_db()
+                    ud = get_user_data(target_uid)
+                    ud["history"].append(f"Đơn chạy lại thành công: {order.get('name')} | SL: {int(order.get('quantity', 0)):,} | Mã đơn: {new_id}")
+                    save_users_db()
+                tg_backup_async("admin chạy lại đơn")
+
+                success_admin = (
+                    f"🔔 <b>ĐƠN SMM ĐÃ CHẠY LẠI THÀNH CÔNG!</b>\n"
+                    f"----------------------------------------\n"
+                    f"👤 Khách hàng: {order.get('mention', '')} (ID: <code>{target_uid}</code>)\n"
+                    f"📦 Gói: {html.escape(str(order.get('name')))}\n"
+                    f"🆔 SMM Order ID: <code>{new_id}</code>\n"
+                    f"🔗 Link: <code>{html.escape(str(order.get('link')))}</code>\n"
+                    f"📊 Số lượng: {int(order.get('quantity', 0)):,}\n"
+                    f"💵 Tổng tiền: {float(order.get('price', 0)):,.0f}đ\n\n"
+                    f"⏳ <b>STATUS: ĐÃ NHẬN ĐƠN ĐANG BUFF</b>"
+                )
+                try:
+                    await query.edit_message_text(
+                        success_admin, parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟢 ĐÃ CHẠY LẠI - ĐANG BUFF", callback_data="none")]])
+                    )
+                except BadRequest:
+                    pass
+
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_uid,
+                        text=(
+                            f"✅ <b>ĐƠN HÀNG CỦA BẠN ĐÃ ĐƯỢC XỬ LÝ THÀNH CÔNG!</b>\n\n"
+                            f"📦 <b>Gói:</b> {html.escape(str(order.get('name')))}\n"
+                            f"🔗 <b>Link:</b> <code>{html.escape(str(order.get('link')))}</code>\n"
+                            f"📊 <b>Số lượng:</b> <code>{int(order.get('quantity', 0)):,}</code>\n"
+                            f"🆔 <b>Mã đơn hệ thống (ID):</b> <code>{new_id}</code>\n\n"
+                            f"⏳ <i>Đơn hàng đang được tiến hành tăng tương tác.</i>"
+                        ),
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    asyncio.create_task(background_order_status_checker(
+                        context, int(new_id), query.message.chat_id, query.message.message_id,
+                        target_uid, order.get("mention", ""), order.get("name"), order.get("link"),
+                        int(order.get("quantity", 0)), float(order.get("price", 0))
+                    ))
+                except Exception:
+                    pass
+
+            else:
+                # ===== HOÀN TIỀN cho khách =====
+                refund_amt = float(order.get("price", 0))
+                with DB_LOCK:
+                    target_data = get_user_data(target_uid)
+                    target_data["balance"] += refund_amt
+                    target_data["history"].append(f"Hoàn tiền đơn lỗi: {order.get('name')} | +{refund_amt:,.0f}đ")
+                    save_users_db()
+                    new_bal = target_data["balance"]
+                    PENDING_DB.pop(order_key, None)
+                    save_pending_db()
+                tg_backup_async("admin hoàn tiền đơn lỗi")
+
+                try:
+                    await query.edit_message_text(
+                        build_failed_order_admin_text(order_key, order, f"💰 <b>ĐÃ HOÀN {refund_amt:,.0f}đ CHO KHÁCH</b>"),
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔴 ĐÃ HOÀN TIỀN", callback_data="none")]])
+                    )
+                except BadRequest:
+                    pass
+
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_uid,
+                        text=(
+                            f"❌ <b>Rất tiếc, đơn hàng của bạn chưa thể thực hiện.</b>\n\n"
+                            f"📦 <b>Gói:</b> {html.escape(str(order.get('name')))}\n"
+                            f"💵 Đã hoàn lại <code>{refund_amt:,.0f}đ</code> vào số dư.\n"
+                            f"💳 <b>Số dư hiện tại:</b> <code>{new_bal:,.0f}đ</code>\n\n"
+                            f"Liên hệ Admin {html.escape(ADMIN_USERNAME)} để được hỗ trợ."
+                        ),
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+        finally:
+            busy.discard(order_key)
         return
 
     elif data == "user_click_reply":
@@ -3679,6 +3979,7 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         selected_item = next((i for i in cat_data.get("items", []) if i["id"] == item_id), None)
         if selected_item:
             context.user_data["buying_service"] = selected_item
+            context.user_data["order_pending"] = False
             
             keyboard = [
                 [
@@ -4055,4 +4356,4 @@ def main():
     flush_backup()  # đẩy dữ liệu lên backup lần cuối khi bị tắt (SIGTERM)
 
 if __name__ == "__main__":
- main()
+    main()
