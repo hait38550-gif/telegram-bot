@@ -1452,7 +1452,7 @@ def build_topup_qr(user_id, amount, bank_idx):
     )
     return qr_url, caption
 
-BUILD_TAG = "qr-v8-admin-menu-bottom"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
+BUILD_TAG = "qr-v9-menu-fix-unpin"   # in ra log lúc khởi động để biết Render đang chạy đúng bản này chưa
 BANK_BINS = {"MBBank": "970422", "MB": "970422"}   # mã BIN ngân hàng (vietqr.io nhận cả tên và BIN)
 
 def build_qr_urls(user_id, amount, bank_idx):
@@ -2297,6 +2297,23 @@ def build_failed_order_admin_keyboard(key):
         [InlineKeyboardButton("💰 Hoàn tiền", callback_data=f"admin_refund:{key}")]
     ], link)
 
+async def admin_delete_order_msg_later(update: Update, user, delay=3):
+    """Admin tạo đơn xong: xóa tin kết quả đơn, menu mới sẽ do schedule_admin_menu_bump tạo."""
+    if not is_admin(user.id, user.username):
+        return
+    msg = update.callback_query.message if update.callback_query else None
+    if not msg:
+        return
+
+    async def _task():
+        await asyncio.sleep(delay)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    asyncio.create_task(_task())
+
 async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE, cmt_type="Mặc định"):
     user = update.effective_user
     selected_item = context.user_data.get("buying_service", {})
@@ -2400,6 +2417,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.callback_query.edit_message_text(success_text, reply_markup=reply_markup, parse_mode="HTML")
         else:
             await update.message.reply_text(success_text, reply_markup=reply_markup, parse_mode="HTML")
+        await admin_delete_order_msg_later(update, user)
         return ConversationHandler.END
 
     # ================= TỰ ĐỘNG GỌI SMM API MUA ĐƠN =================
@@ -2507,6 +2525,7 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.callback_query.edit_message_text(wait_text, reply_markup=wait_markup, parse_mode="HTML")
         else:
             await update.message.reply_text(wait_text, reply_markup=wait_markup, parse_mode="HTML")
+        await admin_delete_order_msg_later(update, user)
         return ConversationHandler.END
 
     success_text = (
@@ -2530,6 +2549,8 @@ async def process_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.callback_query.edit_message_text(success_text, reply_markup=reply_markup, parse_mode="HTML")
     else:
         await update.message.reply_text(success_text, reply_markup=reply_markup, parse_mode="HTML")
+
+    await admin_delete_order_msg_later(update, user)
 
     user_mention = get_user_mention(user)
 
@@ -4026,12 +4047,19 @@ async def _button_handler_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         if query.message.photo or query.message.video:
             await query.message.delete()
             new_msg = await query.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
-            if is_admin(user.id, user.username):
-                ADMIN_MENU["msg_id"] = new_msg.message_id
+            cur_id = new_msg.message_id
         else:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=reply_markup)
-            if is_admin(user.id, user.username):
-                ADMIN_MENU["msg_id"] = query.message.message_id
+            cur_id = query.message.message_id
+        if is_admin(user.id, user.username):
+            old_id = ADMIN_MENU.get("msg_id")
+            ADMIN_MENU["msg_id"] = cur_id
+            # Xóa menu cũ/menu bump còn sót để chỉ còn 1 menu duy nhất
+            if old_id and old_id != cur_id:
+                try:
+                    await context.bot.delete_message(chat_id=query.message.chat_id, message_id=old_id)
+                except Exception:
+                    pass
 
     elif data == "cat_fb":
         text, reply_markup = fb_menu_keyboard()
@@ -4578,6 +4606,18 @@ async def admin_restore_document_handler(update: Update, context: ContextTypes.D
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Trở về Quản Lý", callback_data="admin_panel")]])
     )
+
+async def delete_pin_service_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tự xóa dòng 'pinned ...' của Telegram sau mỗi lần ghim backup."""
+    msg = update.effective_message
+    if not msg:
+        return
+    if str(msg.chat_id) != str(TG_BACKUP_CHAT_ID):
+        return
+    try:
+        await msg.delete()
+    except Exception as e:
+        logging.warning(f"Không xóa được tin 'pinned': {e}")
 
 # ==================== MENU ADMIN LUÔN Ở CUỐI CHAT ====================
 # Khi có tin nhắn khác gửi cho Admin (đơn mới, backup, thông báo...), bot gửi menu mới
@@ -5364,6 +5404,7 @@ def main():
     application.add_handler(CommandHandler("topup", admin_topup_cmd))
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(filters.Document.ALL, admin_restore_document_handler), group=1)
+    application.add_handler(MessageHandler(filters.StatusUpdate.PINNED_MESSAGE, delete_pin_service_message), group=2)
     application.add_error_handler(error_handler)
 
     print("🤖 Bot đang chạy...")
