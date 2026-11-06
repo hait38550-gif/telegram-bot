@@ -300,7 +300,7 @@ _TG_SEND_LOCK = threading.Lock()
 _TG_RESTORED = False
 
 def _tg_files():
-    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE, PENDING_FILE, ORDERS_FILE]
+    return [DB_FILE, GITCODE_DB_FILE, SMS_DB_FILE, SEPAY_TX_FILE, PROMO_FILE, PENDING_FILE, ORDERS_FILE, os.path.join(DB_DIR, "dl_history.json")]
 
 def _tg_ready():
     return bool(TG_BACKUP_ENABLED and TG_BACKUP_CHAT_ID and TG_BACKUP_CHAT_ID != "YOUR_ADMIN_CHAT_ID"
@@ -1727,6 +1727,7 @@ def main_menu_keyboard(user_id, username, first_name="bạn"):
         [InlineKeyboardButton("📦 SẢN PHẨM TÀI KHOẢN (ACCOUNT)", callback_data="products_p1")],
         [InlineKeyboardButton("🤖 TẠO BOT TELE", callback_data="create_bot_tele_menu")],
         [InlineKeyboardButton("✔ TÍCH XANH FACEBOOK", callback_data="tick_xanh_menu")],
+        [InlineKeyboardButton("📥 TẢI VIDEO MXH (TikTok • Facebook)", callback_data="dl_menu")],
         [
             InlineKeyboardButton("📘 FACEBOOK", callback_data="cat_fb"),
             InlineKeyboardButton("🎵 TIKTOK", callback_data="cat_tt")
@@ -4639,6 +4640,665 @@ def install_admin_menu_hook():
 
         setattr(ExtBot, name, make(orig))
 
+# ==================== TẢI VIDEO MẠNG XÃ HỘI (TIKTOK / FACEBOOK) ====================
+# Yêu cầu: thêm `yt-dlp` vào requirements.txt (TikTok dùng API tikwm, Facebook dùng yt-dlp).
+import glob
+
+DL_HISTORY_FILE = os.path.join(DB_DIR, "dl_history.json")
+_dl_hist_raw = _load_json(DL_HISTORY_FILE, {})
+DL_HISTORY_DB = _dl_hist_raw if isinstance(_dl_hist_raw, dict) else {}
+
+def save_dl_history():
+    _save_json(DL_HISTORY_FILE, DL_HISTORY_DB, "dl_history")
+
+# Khi Admin khôi phục backup thủ công -> nạp lại lịch sử tải video vào bộ nhớ
+_orig_restore_zip = restore_from_zip_bytes
+def restore_from_zip_bytes(raw, missing_only=False):
+    res = _orig_restore_zip(raw, missing_only)
+    if not missing_only:
+        try:
+            if os.path.exists(DL_HISTORY_FILE):
+                with open(DL_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    obj = json.load(f)
+                if isinstance(obj, dict):
+                    with DB_LOCK:
+                        DL_HISTORY_DB.clear()
+                        DL_HISTORY_DB.update(obj)
+        except Exception as e:
+            logging.error(f"Lỗi nạp lại lịch sử tải video: {e}")
+    return res
+
+DL_DIR = os.getenv("DL_TMP_DIR", "dl_tmp")
+DL_TTL = 180                          # video tự xóa sau 3 phút
+DL_MAX_BYTES = 49 * 1024 * 1024       # Telegram bot chỉ gửi được file <= 50MB
+DL_HIST_PER_PAGE = 5
+DL_HIST_MAX = 30                      # mỗi khách giữ tối đa 30 link gần nhất
+DL_SEM = threading.Semaphore(3)       # tối đa 3 video tải cùng lúc (tránh tràn RAM/CPU Render free)
+DL_CACHE = {}                         # hid -> đường dẫn file đang còn trên đĩa (để nút "Tải xuống")
+DL_TASKS = set()
+DL_BUSY_USERS = set()
+DL_WAIT = {}                          # user_id -> {"platform","prompt_id","ts"}: đang chờ khách gửi link
+DL_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+try:
+    os.makedirs(DL_DIR, exist_ok=True)
+    for _f in glob.glob(os.path.join(DL_DIR, "*")):
+        try:
+            os.remove(_f)
+        except Exception:
+            pass
+except Exception:
+    pass
+
+DL_PLATFORMS = {
+    "tt": {"name": "TikTok", "icon": "🎵", "example": "https://vt.tiktok.com/ZSxxxxxx/  hoặc  https://www.tiktok.com/@user/video/123..."},
+    "fb": {"name": "Facebook", "icon": "📘", "example": "https://www.facebook.com/share/v/xxxx/  |  https://fb.watch/xxxx/  |  https://www.facebook.com/reel/123..."},
+}
+DL_URL_PATTERNS = {
+    "tt": re.compile(r"(?<![\w-])(?:https?://)?(?:[\w-]+\.)*tiktok\.com/\S+", re.I),
+    "fb": re.compile(r"(?<![\w-])(?:https?://)?(?:[\w-]+\.)*(?:facebook\.com|fb\.com|fb\.watch)/\S+", re.I),
+}
+
+class DLError(Exception):
+    pass
+
+def extract_dl_url(platform, text):
+    """Lấy link đúng định dạng TikTok/Facebook trong tin nhắn. Trả None nếu sai."""
+    m = DL_URL_PATTERNS[platform].search(text or "")
+    if not m:
+        return None
+    url = m.group(0).rstrip(".,;:!?)]}>\"'")
+    if not url.lower().startswith("http"):
+        url = "https://" + url
+    return url
+
+def _dl_cleanup_files(base):
+    for p in glob.glob(base + "*"):
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+
+def _stream_to_file(url, path, headers=None):
+    try:
+        with requests.get(url, headers=headers or {"User-Agent": DL_UA}, stream=True, timeout=(10, 30), allow_redirects=True) as r:
+            if r.status_code != 200:
+                raise DLError(f"Máy chủ video trả lỗi HTTP {r.status_code}")
+            total = int(r.headers.get("Content-Length") or 0)
+            if total > DL_MAX_BYTES:
+                raise DLError("Video quá lớn (trên 49MB), Telegram không cho bot gửi file này.")
+            size = 0
+            with open(path, "wb") as f:
+                for chunk in r.iter_content(256 * 1024):
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > DL_MAX_BYTES:
+                        raise DLError("Video quá lớn (trên 49MB), Telegram không cho bot gửi file này.")
+                    f.write(chunk)
+        if size < 10 * 1024:
+            raise DLError("File video tải về bị lỗi (quá nhỏ).")
+    except DLError:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        raise DLError(f"Lỗi tải file: {type(e).__name__}")
+
+def _tiktok_tikwm(url, path):
+    """Tải TikTok không logo qua API tikwm."""
+    last = "Không lấy được video"
+    for attempt in range(3):
+        try:
+            r = requests.post("https://www.tikwm.com/api/", data={"url": url, "hd": 1},
+                              headers={"User-Agent": DL_UA}, timeout=20)
+            j = r.json()
+        except Exception as e:
+            last = f"Không kết nối được máy chủ TikTok ({type(e).__name__})"
+            time.sleep(1.5)
+            continue
+        if j.get("code") == 0 and j.get("data"):
+            d = j["data"]
+            cands = []
+            for k in ("hdplay", "play"):
+                if d.get(k) and d[k] not in cands:
+                    cands.append(d[k])
+            if not cands:
+                raise DLError("Bài đăng này là slideshow ảnh, không có video để tải.")
+            title = (d.get("title") or "").strip()
+            err = None
+            for c in cands:
+                try:
+                    _stream_to_file(urllib.parse.urljoin("https://www.tikwm.com/", c), path)
+                    return title
+                except DLError as e:
+                    err = e
+            raise err
+        last = str(j.get("msg") or "Link TikTok không hợp lệ hoặc video đã bị xóa")[:150]
+        if "limit" in last.lower() or "second" in last.lower():
+            time.sleep(1.6)
+            continue
+        break
+    raise DLError(last)
+
+def _ytdlp_download(url, base):
+    try:
+        import yt_dlp
+    except ImportError:
+        raise DLError("Server chưa cài thư viện yt-dlp (thêm dòng 'yt-dlp' vào requirements.txt rồi deploy lại).")
+    opts = {
+        "outtmpl": base + ".%(ext)s",
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "format": "best[ext=mp4][filesize<49M]/best[ext=mp4][filesize_approx<49M]/best[height<=720][ext=mp4]/best[ext=mp4]/best",
+        "max_filesize": DL_MAX_BYTES,
+        "socket_timeout": 20,
+        "retries": 3,
+        "http_headers": {"User-Agent": DL_UA},
+    }
+    ck = os.getenv("DL_COOKIES_FILE", "").strip()   # (tuỳ chọn) cookies.txt để tải video cần đăng nhập
+    if ck and os.path.exists(ck):
+        opts["cookiefile"] = ck
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception as e:
+        msg = str(e).lower()
+        if any(k in msg for k in ("login", "private", "cookies", "sign in", "not available", "log in")):
+            raise DLError("Video riêng tư / bị giới hạn / cần đăng nhập nên bot không tải được. Hãy dùng video công khai.")
+        raise DLError("Không tải được: " + str(e)[:150])
+    if isinstance(info, dict) and info.get("entries"):
+        entries = [x for x in info["entries"] if x]
+        info = entries[0] if entries else {}
+    files = [f for f in glob.glob(base + ".*") if not f.endswith((".part", ".ytdl", ".tmp"))]
+    if not files:
+        raise DLError("Video quá lớn (trên 49MB) hoặc không tải được.")
+    path = max(files, key=os.path.getsize)
+    if os.path.getsize(path) > DL_MAX_BYTES:
+        _dl_cleanup_files(base)
+        raise DLError("Video quá lớn (trên 49MB), Telegram không cho bot gửi file này.")
+    return path, ((info or {}).get("title") or "").strip()
+
+def _fb_resolve_redirect(url):
+    """Link share / fb.watch -> link thật (nếu chuyển hướng được)."""
+    try:
+        r = requests.get(url, headers={"User-Agent": DL_UA}, allow_redirects=True, timeout=15, stream=True)
+        final = r.url
+        r.close()
+        if final and "login" not in final.lower() and final != url:
+            return final
+    except Exception:
+        pass
+    return url
+
+def _fb_scrape(url, path):
+    """Cách dự phòng: đọc trang Facebook lấy link video HD/SD."""
+    try:
+        r = requests.get(url, headers={"User-Agent": DL_UA, "Accept-Language": "en-US,en;q=0.9"}, timeout=20, allow_redirects=True)
+        body = r.text
+    except Exception as e:
+        raise DLError(f"Không mở được trang Facebook ({type(e).__name__})")
+    title = ""
+    mt = re.search(r'<meta property="og:title" content="([^"]*)"', body)
+    if mt:
+        title = html.unescape(mt.group(1)).strip()
+    last = None
+    for key in ("browser_native_hd_url", "hd_src", "playable_url_quality_hd", "browser_native_sd_url", "sd_src", "playable_url"):
+        m = re.search(r'"%s":"(https:[^"]+)"' % key, body)
+        if not m:
+            continue
+        try:
+            link = json.loads('"' + m.group(1) + '"')
+        except Exception:
+            link = m.group(1).replace("\\/", "/")
+        try:
+            _stream_to_file(link, path)
+            return title
+        except DLError as e:
+            last = e
+    raise last or DLError("Không tìm thấy video trong link này (video riêng tư hoặc link không hợp lệ).")
+
+def download_video_sync(platform, url, token):
+    """Chạy ở luồng riêng. Trả (đường_dẫn_file, tiêu_đề). Lỗi -> DLError."""
+    with DL_SEM:
+        base = os.path.join(DL_DIR, token)
+        errors = []
+        try:
+            if platform == "tt":
+                try:
+                    title = _tiktok_tikwm(url, base + ".mp4")
+                    return base + ".mp4", title
+                except DLError as e:
+                    errors.append(str(e))
+                    _dl_cleanup_files(base)
+                try:
+                    return _ytdlp_download(url, base)
+                except DLError as e:
+                    errors.append(str(e))
+                    _dl_cleanup_files(base)
+            else:
+                cands = [url]
+                if re.search(r"/share/|fb\.watch|/l\.php", url, re.I):
+                    real = _fb_resolve_redirect(url)
+                    if real not in cands:
+                        cands.append(real)
+                for u in cands:
+                    try:
+                        return _ytdlp_download(u, base)
+                    except DLError as e:
+                        errors.append(str(e))
+                        _dl_cleanup_files(base)
+                for u in reversed(cands):
+                    try:
+                        title = _fb_scrape(u, base + ".mp4")
+                        return base + ".mp4", title
+                    except DLError as e:
+                        errors.append(str(e))
+                        _dl_cleanup_files(base)
+        except Exception as e:
+            if not isinstance(e, DLError):
+                logging.error(f"Lỗi tải video {platform}: {e}")
+                errors.append("Lỗi hệ thống khi tải video")
+        # ưu tiên báo lỗi dễ hiểu nhất
+        best = next((x for x in errors if "riêng tư" in x or "quá lớn" in x or "slideshow" in x), None)
+        raise DLError(best or (errors[0] if errors else "Không tải được video"))
+
+def add_dl_history(uid, rec):
+    with DB_LOCK:
+        lst = DL_HISTORY_DB.setdefault(str(uid), [])
+        lst.append(rec)
+        if len(lst) > DL_HIST_MAX:
+            del lst[:len(lst) - DL_HIST_MAX]
+        save_dl_history()
+
+def find_dl_rec(uid, hid):
+    for rec in DL_HISTORY_DB.get(str(uid), []):
+        if rec.get("hid") == hid:
+            return rec
+    return None
+
+def dl_video_keyboard(hid):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💾 Tải xuống (lưu vào máy)", callback_data=f"dl_save:{hid}")],
+        [InlineKeyboardButton("📥 Tải video khác", callback_data="dl_menu"), InlineKeyboardButton("📜 Lịch sử", callback_data="dl_hist:0")],
+        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+    ])
+
+def dl_menu_view():
+    text = (
+        f"📥 <b>TẢI VIDEO MẠNG XÃ HỘI</b>\n"
+        f"════════════════════════════════\n\n"
+        f"✨ Tải video <b>TikTok</b> (không logo) và <b>Facebook</b> (video, reel, watch, link share...) hoàn toàn miễn phí.\n\n"
+        f"⏱️ <i>Video gửi cho bạn sẽ tự động xóa sau 3 phút. Cần xem lại thì vào Lịch sử để gửi lại.</i>\n\n"
+        f"👇 <b>Chọn nền tảng:</b>"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎵 Tải video TikTok", callback_data="dl_tt")],
+        [InlineKeyboardButton("📘 Tải video Facebook", callback_data="dl_fb")],
+        [InlineKeyboardButton("📜 Lịch sử tải video", callback_data="dl_hist:0")],
+        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+    ])
+    return text, kb
+
+def build_dl_history_view(uid, page=0):
+    items = list(reversed(DL_HISTORY_DB.get(str(uid), [])))
+    total = len(items)
+    pages = max(1, (total + DL_HIST_PER_PAGE - 1) // DL_HIST_PER_PAGE)
+    page = max(0, min(page, pages - 1))
+    keyboard = []
+    if total == 0:
+        text = (
+            f"📜 <b>LỊCH SỬ TẢI VIDEO</b>\n"
+            f"════════════════════════════════\n\n"
+            f"ℹ️ Bạn chưa tải video nào."
+        )
+    else:
+        text = (
+            f"📜 <b>LỊCH SỬ TẢI VIDEO</b> ({total} video)\n"
+            f"════════════════════════════════\n"
+            f"📄 Trang {page + 1}/{pages}\n"
+        )
+        start = page * DL_HIST_PER_PAGE
+        for n, rec in enumerate(items[start:start + DL_HIST_PER_PAGE], start=start + 1):
+            info = DL_PLATFORMS.get(rec.get("platform"), {"name": "?", "icon": "🎬"})
+            link = str(rec.get("url", ""))
+            if len(link) > 110:
+                link = link[:107] + "..."
+            title = str(rec.get("title") or "").strip()
+            text += f"\n────────────────────────\n<b>{n}.</b> {info['icon']} <b>{info['name']}</b> • 🕒 {_fmt_order_time(rec.get('time'))}\n"
+            if title:
+                text += f"📝 {html.escape(title[:80])}\n"
+            text += f"🔗 <code>{html.escape(link)}</code>\n"
+            keyboard.append([InlineKeyboardButton(f"🔁 Gửi lại video #{n}", callback_data=f"dl_resend:{rec['hid']}")])
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️ Trước", callback_data=f"dl_hist:{page - 1}"))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton("Sau ➡️", callback_data=f"dl_hist:{page + 1}"))
+        if nav:
+            keyboard.append(nav)
+        keyboard.append([InlineKeyboardButton("🗑️ Xóa lịch sử", callback_data="dl_hist_clear")])
+    keyboard.append([InlineKeyboardButton("📥 Menu tải video", callback_data="dl_menu"), InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+async def _dl_cleanup_task(bot, chat_id, msg_ids, paths, hid):
+    await asyncio.sleep(DL_TTL)
+    for mid in msg_ids:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass
+    for p in paths:
+        try:
+            if p and os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+        if hid and DL_CACHE.get(hid) == p:
+            DL_CACHE.pop(hid, None)
+
+def schedule_dl_cleanup(bot, chat_id, msg_ids, paths=(), hid=None):
+    task = asyncio.create_task(_dl_cleanup_task(bot, chat_id, list(msg_ids), list(paths), hid))
+    DL_TASKS.add(task)
+    task.add_done_callback(DL_TASKS.discard)
+
+async def dl_send_video(bot, chat_id, rec, path=None):
+    """Gửi video (từ file trên đĩa, hoặc từ file_id cũ), kèm nút Tải xuống. Tự xóa sau 3 phút."""
+    hid = rec["hid"]
+    info = DL_PLATFORMS.get(rec.get("platform"), {"name": "", "icon": "🎬"})
+    title = str(rec.get("title") or "").strip()
+    caption = f"✅ <b>TẢI VIDEO {info['name'].upper()} THÀNH CÔNG!</b>\n"
+    if title:
+        caption += f"📝 {html.escape(title[:200])}\n"
+    caption += "\n⏱️ <i>Video tự động xóa sau 3 phút. Bấm \"Tải xuống\" để nhận file lưu vào máy.</i>"
+    kb = dl_video_keyboard(hid)
+    common = dict(chat_id=chat_id, caption=caption, parse_mode="HTML", reply_markup=kb)
+    tmo = dict(read_timeout=180, write_timeout=180, connect_timeout=30)
+    if path:
+        try:
+            with open(path, "rb") as f:
+                msg = await bot.send_video(video=f, supports_streaming=True, **tmo, **common)
+        except Exception as e:
+            logging.warning(f"send_video lỗi ({e}), thử gửi dạng file")
+            with open(path, "rb") as f:
+                msg = await bot.send_document(document=InputFile(f, filename=f"video_{hid}.mp4"), **tmo, **common)
+    else:
+        msg = await bot.send_video(video=rec["file_id"], supports_streaming=True, **common)
+    fid = (msg.video.file_id if msg.video else (msg.document.file_id if msg.document else None))
+    if fid:
+        rec["file_id"] = fid
+        with DB_LOCK:
+            save_dl_history()
+    schedule_dl_cleanup(bot, chat_id, [msg.message_id], [path] if path else [], hid)
+    return msg
+
+async def dl_send_document(bot, chat_id, hid, rec):
+    """Gửi video dạng FILE để khách lưu vào máy (Thư viện / Tải xuống)."""
+    caption = (
+        "💾 <b>FILE VIDEO TẢI XUỐNG</b>\n"
+        "📲 Bấm vào file → chọn <b>Lưu vào Thư viện</b> (hoặc <b>Tải xuống</b>) là xong.\n"
+        "⏱️ <i>File tự xóa sau 3 phút.</i>"
+    )
+    tmo = dict(read_timeout=180, write_timeout=180, connect_timeout=30)
+    msg = None
+    path = DL_CACHE.get(hid)
+    if path and os.path.exists(path):
+        with open(path, "rb") as f:
+            msg = await bot.send_document(chat_id=chat_id, document=InputFile(f, filename=f"video_{hid}.mp4"),
+                                          caption=caption, parse_mode="HTML", **tmo)
+    elif rec.get("file_id"):
+        try:
+            msg = await bot.send_document(chat_id=chat_id, document=rec["file_id"], caption=caption, parse_mode="HTML")
+        except Exception:
+            msg = None
+    new_path = None
+    if msg is None:
+        token = uuid.uuid4().hex[:10]
+        new_path, _t = await asyncio.to_thread(download_video_sync, rec.get("platform"), rec.get("url"), token)
+        DL_CACHE[hid] = new_path
+        with open(new_path, "rb") as f:
+            msg = await bot.send_document(chat_id=chat_id, document=InputFile(f, filename=f"video_{hid}.mp4"),
+                                          caption=caption, parse_mode="HTML", **tmo)
+    schedule_dl_cleanup(bot, chat_id, [msg.message_id], [new_path] if new_path else [], hid if new_path else None)
+
+def dl_error_text(platform, err):
+    info = DL_PLATFORMS[platform]
+    return (
+        f"❌ <b>KHÔNG TẢI ĐƯỢC VIDEO {info['name'].upper()}</b>\n\n"
+        f"⚠️ {html.escape(str(err))}\n\n"
+        f"💬 <i>Bạn có thể gửi link khác vào đây để thử lại.</i>"
+    )
+
+def dl_prompt_text(platform, error=None):
+    info = DL_PLATFORMS[platform]
+    head = ""
+    if error:
+        head = f"⚠️ <b>{error}</b>\n\n"
+    extra = ""
+    if platform == "fb":
+        extra = "✅ Hỗ trợ: video thường, reel, watch, <b>link share</b> (facebook.com/share/...), fb.watch.\n🔓 Video phải để <b>công khai</b>.\n\n"
+    return (
+        f"{head}{info['icon']} <b>TẢI VIDEO {info['name'].upper()}</b>\n"
+        f"════════════════════════════════\n\n"
+        f"{extra}"
+        f"🔗 <i>Gửi link video {info['name']} vào đây:</i>\n"
+        f"<code>{info['example']}</code>"
+    )
+
+def dl_prompt_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("↩️ Menu tải video", callback_data="dl_menu")],
+        [InlineKeyboardButton("🏠 Menu Chính", callback_data="menu_main")]
+    ])
+
+async def dl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    data = query.data or ""
+    get_user_data(user.id)
+    chat_id = query.message.chat_id
+    try:
+        if data == "dl_menu":
+            await query.answer()
+            DL_WAIT.pop(user.id, None)
+            text, kb = dl_menu_view()
+            await query_edit_or_replace_admin(update, context, text=text, reply_markup=kb, parse_mode="HTML")
+
+        elif data in ("dl_tt", "dl_fb"):
+            await query.answer()
+            platform = data[3:]
+            msg = await query_edit_or_replace_admin(update, context, text=dl_prompt_text(platform), reply_markup=dl_prompt_kb(), parse_mode="HTML")
+            DL_WAIT[user.id] = {"platform": platform, "prompt_id": msg.message_id, "ts": time.time()}
+
+        elif data.startswith("dl_hist:"):
+            await query.answer()
+            DL_WAIT.pop(user.id, None)
+            try:
+                page = int(data.split(":")[1])
+            except ValueError:
+                page = 0
+            text, kb = build_dl_history_view(user.id, page)
+            await query_edit_or_replace_admin(update, context, text=text, reply_markup=kb, parse_mode="HTML")
+
+        elif data == "dl_hist_clear":
+            await query.answer("🗑️ Đã xóa lịch sử tải video")
+            with DB_LOCK:
+                DL_HISTORY_DB.pop(str(user.id), None)
+                save_dl_history()
+            text, kb = build_dl_history_view(user.id, 0)
+            await query_edit_or_replace_admin(update, context, text=text, reply_markup=kb, parse_mode="HTML")
+
+        elif data.startswith("dl_save:"):
+            hid = data.split(":", 1)[1]
+            rec = find_dl_rec(user.id, hid)
+            if not rec:
+                await query.answer("⚠️ Không tìm thấy video này trong lịch sử.", show_alert=True)
+                return
+            busy = context.bot_data.setdefault("dl_busy", set())
+            if ("save", hid) in busy:
+                await query.answer("⏳ Đang gửi file, vui lòng chờ...")
+                return
+            busy.add(("save", hid))
+            try:
+                await query.answer("⏳ Đang gửi file tải xuống, vui lòng chờ...")
+                await dl_send_document(context.bot, chat_id, hid, rec)
+            except DLError as e:
+                await context.bot.send_message(chat_id=chat_id, text=f"❌ Không gửi được file: {html.escape(str(e))}")
+            except Exception as e:
+                logging.error(f"Lỗi gửi file tải xuống: {e}")
+                await context.bot.send_message(chat_id=chat_id, text="❌ Không gửi được file, vui lòng thử lại sau.")
+            finally:
+                busy.discard(("save", hid))
+
+        elif data.startswith("dl_resend:"):
+            hid = data.split(":", 1)[1]
+            rec = find_dl_rec(user.id, hid)
+            if not rec:
+                await query.answer("⚠️ Không tìm thấy video này trong lịch sử.", show_alert=True)
+                return
+            busy = context.bot_data.setdefault("dl_busy", set())
+            if ("resend", hid) in busy:
+                await query.answer("⏳ Đang gửi lại, vui lòng chờ...")
+                return
+            busy.add(("resend", hid))
+            status = None
+            try:
+                await query.answer("⏳ Đang gửi lại video...")
+                sent = False
+                if rec.get("file_id"):
+                    try:
+                        await dl_send_video(context.bot, chat_id, rec)
+                        sent = True
+                    except Exception as e:
+                        logging.info(f"Gửi lại bằng file_id lỗi, tải lại: {e}")
+                if not sent:
+                    status = await context.bot.send_message(chat_id=chat_id, text="⏳ <b>Đang tải lại video, vui lòng chờ...</b>", parse_mode="HTML")
+                    token = uuid.uuid4().hex[:10]
+                    path, _t = await asyncio.to_thread(download_video_sync, rec.get("platform"), rec.get("url"), token)
+                    DL_CACHE[hid] = path
+                    await dl_send_video(context.bot, chat_id, rec, path)
+            except DLError as e:
+                await context.bot.send_message(chat_id=chat_id, text=f"❌ Không gửi lại được: {html.escape(str(e))}\n<i>Video gốc có thể đã bị xóa hoặc chuyển riêng tư.</i>", parse_mode="HTML")
+            except Exception as e:
+                logging.error(f"Lỗi gửi lại video: {e}")
+                await context.bot.send_message(chat_id=chat_id, text="❌ Không gửi lại được video, vui lòng thử lại sau.")
+            finally:
+                busy.discard(("resend", hid))
+                if status:
+                    try:
+                        await status.delete()
+                    except Exception:
+                        pass
+        else:
+            await query.answer()
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            logging.error(f"dl_callback BadRequest: {e}")
+
+async def dl_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Khách gửi link sau khi chọn menu TikTok / Facebook."""
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    wait = DL_WAIT.get(user.id)
+    if not wait:
+        return
+    platform = wait["platform"]
+    info = DL_PLATFORMS[platform]
+    raw = update.message.text or ""
+    url = extract_dl_url(platform, raw)
+
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=wait.get("prompt_id"))
+    except Exception:
+        pass
+
+    if not url:
+        other = "fb" if platform == "tt" else "tt"
+        hint = f"Link không đúng định dạng {info['name']}!"
+        if extract_dl_url(other, raw):
+            hint = f"Đây là link {DL_PLATFORMS[other]['name']}, không phải link {info['name']}!"
+        msg = await context.bot.send_message(chat_id=chat_id, text=dl_prompt_text(platform, hint), parse_mode="HTML", reply_markup=dl_prompt_kb())
+        DL_WAIT[user.id] = {"platform": platform, "prompt_id": msg.message_id, "ts": time.time()}
+        return
+
+    if user.id in DL_BUSY_USERS:
+        msg = await context.bot.send_message(chat_id=chat_id, text="⏳ <b>Bạn đang có 1 video đang được tải, vui lòng chờ xong rồi gửi link tiếp!</b>", parse_mode="HTML", reply_markup=dl_prompt_kb())
+        DL_WAIT[user.id] = {"platform": platform, "prompt_id": msg.message_id, "ts": time.time()}
+        return
+
+    DL_BUSY_USERS.add(user.id)
+    DL_WAIT.pop(user.id, None)
+    status = await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"⏳ <b>Đang tải video {info['name']}...</b>\n<i>Thường mất 5 - 30 giây, vui lòng chờ.</i>",
+        parse_mode="HTML"
+    )
+    path = None
+    hid = uuid.uuid4().hex[:10]
+    try:
+        token = uuid.uuid4().hex[:10]
+        path, title = await asyncio.to_thread(download_video_sync, platform, url, token)
+        rec = {"hid": hid, "platform": platform, "url": url, "title": title[:200], "time": int(time.time()), "file_id": None}
+        DL_CACHE[hid] = path
+        await dl_send_video(context.bot, chat_id, rec, path)
+        add_dl_history(user.id, rec)
+    except DLError as e:
+        msg = await context.bot.send_message(chat_id=chat_id, text=dl_error_text(platform, e), parse_mode="HTML", reply_markup=dl_prompt_kb())
+        DL_WAIT[user.id] = {"platform": platform, "prompt_id": msg.message_id, "ts": time.time()}
+    except Exception as e:
+        logging.error(f"Lỗi tải/gửi video {platform}: {e}")
+        if path:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+        msg = await context.bot.send_message(chat_id=chat_id, text=dl_error_text(platform, "Lỗi khi gửi video, vui lòng thử lại."), parse_mode="HTML", reply_markup=dl_prompt_kb())
+        DL_WAIT[user.id] = {"platform": platform, "prompt_id": msg.message_id, "ts": time.time()}
+    finally:
+        DL_BUSY_USERS.discard(user.id)
+        try:
+            await status.delete()
+        except Exception:
+            pass
+
+async def dl_clear_wait(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Khách bấm nút khác / gõ lệnh -> thôi chờ link (để tin nhắn thường không bị hiểu nhầm là link)."""
+    try:
+        uid = update.effective_user.id if update.effective_user else None
+        if uid is None or uid not in DL_WAIT:
+            return
+        if update.callback_query is not None:
+            if not (update.callback_query.data or "").startswith("dl_"):
+                DL_WAIT.pop(uid, None)
+        elif update.message is not None and (update.message.text or "").startswith("/"):
+            DL_WAIT.pop(uid, None)
+        if uid in DL_WAIT and time.time() - DL_WAIT[uid].get("ts", 0) > 900:
+            DL_WAIT.pop(uid, None)
+    except Exception:
+        pass
+
+class _DLWaitFilter(filters.MessageFilter):
+    def filter(self, message):
+        u = message.from_user
+        return bool(u and u.id in DL_WAIT)
+
+def install_video_downloader(application):
+    application.add_handler(TypeHandler(Update, dl_clear_wait), group=-2)
+    application.add_handler(CallbackQueryHandler(dl_callback, pattern=r"^dl_"))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & _DLWaitFilter(), dl_text_handler))
+
+
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
         print("⚠️ Vui lòng cấu hình BOT_TOKEN chính xác trước khi chạy bot!")
@@ -4662,6 +5322,7 @@ def main():
     )
     bot_app = application
     install_admin_menu_hook()
+    install_video_downloader(application)
 
     conv_handler = ConversationHandler(
         entry_points=[
