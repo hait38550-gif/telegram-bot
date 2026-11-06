@@ -2,3 +2,4 @@ python-telegram-bot>=22.1
 Flask
 requests
 pillow
+yt-dlp
