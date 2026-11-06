@@ -3326,6 +3326,7 @@ def _dl_opts(q, outtmpl):
         "fragment_retries": 3,
         "concurrent_fragment_downloads": 4,
     }
+    opts["format_sort"] = ["vcodec:h264", "acodec:aac", "ext:mp4:m4a"]
     if FFMPEG_PATH:
         opts["ffmpeg_location"] = FFMPEG_PATH
     if DL_COOKIES_FILE and os.path.exists(DL_COOKIES_FILE):
@@ -3400,6 +3401,7 @@ def _dl_download_inner(url, quality, job):
         path = _find_downloaded(job)
         if not path:
             raise DLError("⚠️ Không tải được file video, vui lòng thử lại.")
+        path = _ensure_compatible(path, job)
         size = os.path.getsize(path)
         if size > TG_UPLOAD_LIMIT:
             biggest = max(biggest, size)
@@ -3419,6 +3421,63 @@ def _dl_download_inner(url, quality, job):
         }
     mb = f" (~{biggest / 1024 / 1024:.0f}MB)" if biggest else ""
     raise DLError(f"⚠️ Video quá nặng{mb}, vượt giới hạn 50MB của Telegram ngay cả ở chất lượng thấp nhất nên không gửi được.")
+
+def _probe_codecs(path):
+    """Đọc codec thật của file bằng ffmpeg (không cần ffprobe). Trả (video, audio, pix_fmt_ok)."""
+    import subprocess
+    try:
+        r = subprocess.run([FFMPEG_PATH, "-hide_banner", "-i", path],
+                           capture_output=True, text=True, timeout=60)
+        err = r.stderr or ""
+    except Exception:
+        return None, None, True
+    v = re.search(r"Video:\s*([A-Za-z0-9_]+)", err)
+    a = re.search(r"Audio:\s*([A-Za-z0-9_]+)", err)
+    vline = re.search(r"Video:.*", err)
+    pix_ok = ("yuv420p" in vline.group(0)) if vline else True
+    return (v.group(1).lower() if v else None), (a.group(1).lower() if a else None), pix_ok
+
+def _ensure_compatible(path, job):
+    """Đảm bảo video là H.264 + AAC (yuv420p) để phát được trên mọi thiết bị."""
+    import subprocess
+    if not FFMPEG_PATH:
+        return path
+    vcodec, acodec, pix_ok = _probe_codecs(path)
+    v_ok = vcodec == "h264" and pix_ok
+    a_ok = (acodec == "aac") or acodec is None   # video không có tiếng thì giữ nguyên
+    if v_ok and a_ok:
+        return path
+    out = os.path.join(DL_TMP_DIR, job + "_fix.mp4")
+    cmd = [FFMPEG_PATH, "-y", "-i", path]
+    if v_ok:
+        cmd += ["-c:v", "copy"]
+    else:
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p"]
+    if acodec is None:
+        cmd += ["-an"]
+    else:
+        cmd += ["-c:a", "aac", "-b:a", "128k"]
+    cmd += ["-movflags", "+faststart", out]
+    try:
+        logging.info(f"🔄 Chuyển mã video ({vcodec}/{acodec}) -> h264/aac")
+        r = subprocess.run(cmd, capture_output=True, timeout=900)
+        if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
+            final = os.path.join(DL_TMP_DIR, job + ".mp4")
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+            os.replace(out, final)
+            return final
+        logging.error(f"ffmpeg chuyển mã lỗi: {(r.stderr or b'')[-300:]!r}")
+    except Exception as e:
+        logging.error(f"Lỗi chuyển mã video: {e}")
+    try:
+        os.remove(out)
+    except Exception:
+        pass
+    return path
+
 
 def dl_download_sync(url, quality):
     job = uuid.uuid4().hex[:10]

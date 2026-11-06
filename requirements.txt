@@ -4,3 +4,4 @@ requests
 pillow
 yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.zip
 imageio-ffmpeg
+imageio-ffmpeg
